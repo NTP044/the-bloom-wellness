@@ -1,0 +1,186 @@
+{
+  "services": [
+    {
+      "id": "srv-nails",
+      "name": "ทำเล็บเจล พรีเมียม (Gel Manicure & Art)",
+      "category": "Nails",
+      "price": 790,
+      "duration": 60,
+      "description": "ตัดแต่งทรงเล็บ เคลียร์หนัง ทาสีเจลเกรดพรีเมียมนำเข้าจากเกาหลี พร้อมเคลือบบำรุงหน้าเล็บ",
+      "icon": "Sparkles"
+    },
+    {
+      "id": "srv-pedicure",
+      "name": "สปาเท้าและเพดิคิวร์อโรมา (Aroma Foot Spa & Pedicure)",
+      "category": "Spa & Care",
+      "price": 990,
+      "duration": 75,
+      "description": "แช่เกลือหิมาลายัน สครับผิวผลัดเซลล์ นวดบำรุงด้วยน้ำมันอโรมา พร้อมตัดแต่งทรงเล็บเท้า",
+      "icon": "Footprints"
+    },
+    {
+      "id": "srv-facial",
+      "name": "ทรีตเมนต์บำรุงผิวหน้าออร์แกนิก (Organic Facial Glow)",
+      "category": "Facial",
+      "price": 1590,
+      "duration": 90,
+      "description": "ทำความสะอาดล้ำลึก ผลักวิตามินเข้มข้น นวดกระตุ้นคอลลาเจน และมาสก์ทองคำเปล่งประกาย",
+      "icon": "Smile"
+    },
+    {
+      "id": "srv-massage",
+      "name": "นวดอโรมาเธอราปีผ่อนคลาย (Aromatherapy Body Massage)",
+      "category": "Massage",
+      "price": 1290,
+      "duration": 60,
+      "description": "นวดน้ำมันกลิ่นเอกลักษณ์สูตร The Bloom Studio ช่วยคลายกล้ามเนื้อและความตึงเครียด",
+      "icon": "HeartHandshake"
+    },
+    {
+      "id": "srv-guasha",
+      "name": "นวดกัวซาหน้ายกกระชับ & หินร้อน (Facial Gua Sha & Hot Stone)",
+      "category": "Facial & Spa",
+      "price": 1490,
+      "duration": 75,
+      "description": "ศาสตร์กัวซายกกระชับกรอบหน้า กระตุ้นการไหลเวียนโลหิต ผสานหินร้อนสปาคลายความตึง",
+      "icon": "Flame"
+    },
+    {
+      "id": "srv-lashes",
+      "name": "ต่อขนตาเส้นต่อเส้นสไตล์เกาหลี (Natural Lash Extension)",
+      "category": "Lashes",
+      "price": 1200,
+      "duration": 90,
+      "description": "ต่อขนตาเกรดไหมพรีเมียมนุ่มเบา ไม่ระคายเคืองตา ดูเป็นธรรมชาติและอ่อนหวาน",
+      "icon": "Eye"
+    }
+  ],
+  "staff": [
+    {
+      "id": "stf-mina",
+      "name": "คุณมีนา สุขเกษม",
+      "nickname": "มีนา (Mina)",
+      "role": "Senior Nail & Spa Artist",
+      "experience": "ประสบการณ์ 6 ปี",
+      "rating": 4.95,
+      "avatar": "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
+      "skills": [
+        "srv-nails",
+        "srv-pedicure",
+        "srv-lashes"
+      ],
+      "bio": "เชี่ยวชาญการออกแบบลายเล็บสไตล์มินิมอลเกาหลีและงานดีเทลประณีต"
+    },
+    {
+      "id": "stf-linda",
+      "name": "คุณลินดา รัตนกุล",
+      "nickname": "ลินดา (Linda)",
+      "role": "Facial & Wellness Therapist",
+      "experience": "ประสบการณ์ 8 ปี",
+      "rating": 4.98,
+      "avatar": "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=300",
+      "skills": [
+        "srv-facial",
+        "srv-massage",
+        "srv-pedicure",
+        "srv-guasha"
+      ],
+      "bio": "ผู้เชี่ยวชาญด้านการวิเคราะห์สภาพผิว ทรีตเมนต์ยกกระชับ และศาสตร์กัวซา"
+    },
+    {
+      "id": "stf-ava",
+      "name": "คุณเอวา พงศ์ไพศาล",
+      "nickname": "เอวา (Ava)",
+      "role": "Holistic Spa & Body Specialist",
+      "experience": "ประสบการณ์ 7 ปี",
+      "rating": 4.92,
+      "avatar": "https://images.unsplash.com/photo-1580489944761-15a19d654956?w=300",
+      "skills": [
+        "srv-massage",
+        "srv-guasha",
+        "srv-facial"
+      ],
+      "bio": "เชี่ยวชาญศาสตร์การนวดคลายจุดกล้ามเนื้อลึก อโรมาเธอราปี และหินร้อนบำบัด"
+    },
+    {
+      "id": "stf-praewa",
+      "name": "คุณแพรวา วงศ์สว่าง",
+      "nickname": "แพรวา (Praewa)",
+      "role": "Lash & Nail Design Master",
+      "experience": "ประสบการณ์ 5 ปี",
+      "rating": 4.96,
+      "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300",
+      "skills": [
+        "srv-nails",
+        "srv-lashes",
+        "srv-pedicure"
+      ],
+      "bio": "ผู้ชำนาญการต่อขนตาเส้นต่อเส้นและการดูแลเล็บสุขภาพดี"
+    }
+  ],
+  "bookings": [
+    {
+      "id": "BK-SAMPLE-01",
+      "createdAt": "2026-09-07T02:30:00.000Z",
+      "status": "pending",
+      "date": "2026-09-05",
+      "time": "13:34",
+      "serviceName": "ทำเล็บเจล พรีเมียม (Gel Manicure & Art)",
+      "servicePrice": 790,
+      "serviceDuration": 60,
+      "staffName": "มีนา (Mina)",
+      "customerName": "คุณวรัญญา สิทธิสาร",
+      "customerPhone": "081-234-5678",
+      "customerEmail": "waranya@example.com",
+      "specialRequest": "ขอโทนสีนู้ดเรียบหรู",
+      "paymentStatus": "paid",
+      "paymentSlipUrl": "https://images.unsplash.com/photo-1580048915913-4f8f5cb481c4?w=600&auto=format&fit=crop&q=80",
+      "calendarEventId": "",
+      "lineUserId": "U1234567890abcdef",
+      "lineDisplayName": "Waranya S."
+    },
+    {
+      "id": "BK-SAMPLE-01",
+      "createdAt": "2026-09-07T02:30:00.000Z",
+      "status": "pending",
+      "date": "2026-09-05",
+      "time": "13:34",
+      "serviceName": "ทำเล็บเจล พรีเมียม (Gel Manicure & Art)",
+      "servicePrice": 790,
+      "serviceDuration": 60,
+      "staffName": "มีนา (Mina)",
+      "customerName": "คุณวรัญญา สิทธิสาร",
+      "customerPhone": "081-234-5678",
+      "customerEmail": "waranya@example.com",
+      "specialRequest": "ขอโทนสีนู้ดเรียบหรู",
+      "paymentStatus": "paid",
+      "paymentSlipUrl": "https://images.unsplash.com/photo-1580048915913-4f8f5cb481c4?w=600&auto=format&fit=crop&q=80",
+      "calendarEventId": "",
+      "lineUserId": "U1234567890abcdef",
+      "lineDisplayName": "Waranya S."
+    }
+  ],
+  "customers": [
+    {
+      "customerPhone": "0899999999",
+      "customerName": "ทดสอบ แอดมิน",
+      "customerEmail": "",
+      "totalBookings": 1,
+      "totalSpent": 0,
+      "lastVisitDate": "2026-09-06",
+      "lineUserId": ""
+    }
+  ],
+  "settings": {
+    "adminPin": "1234",
+    "ownerEmail": "NatapongMumklang@gmail.com",
+    "promptPayNumber": "0812345678",
+    "shopName": "The Bloom Studio",
+    "serverWebhookUrl": "",
+    "gasWebAppUrl": "https://script.google.com/macros/s/AKfycbzmt5LJd1hsKcgttc12Wdn10FVgtkvhfrwm54H0cNJF7DqksFyx4YXODmiOtTbW-2bX/exec",
+    "googleSheetUrl": "https://docs.google.com/spreadsheets/d/1o2V7EsN17dVgFC9WFGfIxFjrbG1hpKg-0U6LUn0aVaw/edit?gid=414137301#gid=414137301",
+    "googleDriveFolderUrl": "",
+    "googleDriveFolderId": "",
+    "googleCalendarId": "primary"
+  }
+}

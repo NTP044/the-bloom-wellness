@@ -1,0 +1,7 @@
+{
+  "name": "The Bloom Studio",
+  "description": "ระบบจองคิว The Bloom Studio พร้อมรองรับ LINE MINI App ด้วย LIFF, ระบบจัดการหลังบ้าน Admin Control Panel และเชื่อมต่อ Google Sheets/Workspace",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
