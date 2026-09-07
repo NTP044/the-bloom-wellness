@@ -564,8 +564,8 @@ function handleAddBooking(b) {
     Logger.log("Calendar error: " + calErr.toString());
   }
 
-  // 2. บันทึกลงแถวชีต Bookings
-  sheet.appendRow([
+  // 2. บันทึกลงแถวชีต Bookings (Upsert: ป้องกันการเพิ่มแถวซ้ำหาก ID มีอยู่แล้ว)
+  const bookingRowData = [
     String(b.id || ("BK-" + Date.now())),
     String(b.createdAt || new Date().toISOString()),
     String(b.status || "pending"),
@@ -584,7 +584,26 @@ function handleAddBooking(b) {
     calendarEventId,
     String(b.lineUserId || ""),
     String(b.lineDisplayName || "")
-  ]);
+  ];
+
+  const bookingId = String(b.id || "").trim();
+  const lastRow = sheet.getLastRow();
+  let existingRow = -1;
+  if (bookingId && lastRow > 1) {
+    const idValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < idValues.length; i++) {
+      if (String(idValues[i][0]).trim() === bookingId) {
+        existingRow = i + 2;
+        break;
+      }
+    }
+  }
+
+  if (existingRow > 0) {
+    sheet.getRange(existingRow, 1, 1, bookingRowData.length).setValues([bookingRowData]);
+  } else {
+    sheet.appendRow(bookingRowData);
+  }
 
   // 3. ส่งอีเมลแจ้งเตือนเจ้าของร้าน
   try {

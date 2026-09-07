@@ -84,6 +84,10 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
   const handleUpdateBookingStatus = async (id, status) => {
     try {
       await adminService.updateBookingStatus(id, { status });
+      setDbData((prev) => ({
+        ...prev,
+        bookings: (prev.bookings || []).map((b) => (b.id === id ? { ...b, status } : b))
+      }));
       showToast(`อัปเดตสถานะเป็น "${status}" เรียบร้อย`);
       fetchDatabase(true);
     } catch (err) {
@@ -94,6 +98,10 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
   const handleDeleteBooking = async (id) => {
     try {
       await adminService.deleteBooking(id);
+      setDbData((prev) => ({
+        ...prev,
+        bookings: (prev.bookings || []).filter((b) => b.id !== id)
+      }));
       showToast("ลบรายการจองสำเร็จเรียบร้อย");
       fetchDatabase(true);
     } catch (err) {
@@ -103,7 +111,14 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
 
   const handleCreateBooking = async (bookingData) => {
     try {
-      await adminService.createBooking(bookingData);
+      const res = await adminService.createBooking(bookingData);
+      const created = res?.booking || res?.data;
+      if (created) {
+        setDbData((prev) => ({
+          ...prev,
+          bookings: [created, ...(prev.bookings || []).filter((b) => b.id !== created.id)]
+        }));
+      }
       showToast("สร้างรายการจองใหม่สำเร็จเรียบร้อย");
       fetchDatabase(true);
     } catch (err) {
@@ -118,6 +133,18 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
         paymentSlipUrl: newSlipUrl,
         paymentStatus: newSlipUrl ? "paid" : "pending"
       });
+      setDbData((prev) => ({
+        ...prev,
+        bookings: (prev.bookings || []).map((b) =>
+          b.id === id
+            ? {
+                ...b,
+                paymentSlipUrl: newSlipUrl,
+                paymentStatus: newSlipUrl ? "paid" : "pending"
+              }
+            : b
+        )
+      }));
       showToast("อัปเดตหลักฐานการโอนเงินสำเร็จ");
       fetchDatabase(true);
     } catch (err) {
@@ -128,7 +155,14 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
   // Services handlers
   const handleCreateService = async (serviceData) => {
     try {
-      await adminService.createService(serviceData);
+      const res = await adminService.createService(serviceData);
+      const created = res?.data || res?.service;
+      if (created) {
+        setDbData((prev) => ({
+          ...prev,
+          services: [...(prev.services || []).filter((s) => s.id !== created.id), created]
+        }));
+      }
       showToast("เพิ่มบริการใหม่สำเร็จ");
       fetchDatabase(true);
     } catch (err) {
@@ -138,7 +172,12 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
 
   const handleUpdateService = async (id, serviceData) => {
     try {
-      await adminService.updateService(id, serviceData);
+      const res = await adminService.updateService(id, serviceData);
+      const updated = res?.data || serviceData;
+      setDbData((prev) => ({
+        ...prev,
+        services: (prev.services || []).map((s) => (s.id === id ? { ...s, ...updated } : s))
+      }));
       showToast("แก้ไขข้อมูลบริการสำเร็จ");
       fetchDatabase(true);
     } catch (err) {
@@ -149,6 +188,10 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
   const handleDeleteService = async (id) => {
     try {
       await adminService.deleteService(id);
+      setDbData((prev) => ({
+        ...prev,
+        services: (prev.services || []).filter((s) => s.id !== id)
+      }));
       showToast("ลบบริการสำเร็จ");
       fetchDatabase(true);
     } catch (err) {
@@ -159,7 +202,14 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
   // Staff handlers
   const handleCreateStaff = async (staffData) => {
     try {
-      await adminService.createStaff(staffData);
+      const res = await adminService.createStaff(staffData);
+      const created = res?.data || res?.staff;
+      if (created) {
+        setDbData((prev) => ({
+          ...prev,
+          staff: [...(prev.staff || []).filter((st) => st.id !== created.id), created]
+        }));
+      }
       showToast("เพิ่มช่างผู้เชี่ยวชาญใหม่สำเร็จ");
       fetchDatabase(true);
     } catch (err) {
@@ -169,7 +219,12 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
 
   const handleUpdateStaff = async (id, staffData) => {
     try {
-      await adminService.updateStaff(id, staffData);
+      const res = await adminService.updateStaff(id, staffData);
+      const updated = res?.data || staffData;
+      setDbData((prev) => ({
+        ...prev,
+        staff: (prev.staff || []).map((st) => (st.id === id ? { ...st, ...updated } : st))
+      }));
       showToast("แก้ไขข้อมูลช่างสำเร็จ");
       fetchDatabase(true);
     } catch (err) {
@@ -180,6 +235,10 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
   const handleDeleteStaff = async (id) => {
     try {
       await adminService.deleteStaff(id);
+      setDbData((prev) => ({
+        ...prev,
+        staff: (prev.staff || []).filter((st) => st.id !== id)
+      }));
       showToast("ลบรายชื่อช่างสำเร็จ");
       fetchDatabase(true);
     } catch (err) {

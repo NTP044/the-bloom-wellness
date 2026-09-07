@@ -241,108 +241,6 @@ function loadDatabase() {
   }
 }
 
-// Data Sanitization & Deduplication Helper
-function sanitizeDatabase(targetDb) {
-  if (!targetDb) return targetDb;
-
-  // 1. Deduplicate Bookings
-  if (Array.isArray(targetDb.bookings)) {
-    const seenBookingIds = new Set();
-    const cleanBookings = [];
-    targetDb.bookings.forEach((b, idx) => {
-      let bId = b.id || b.ID;
-      if (!bId || seenBookingIds.has(bId)) {
-        bId = `BK-${Date.now().toString(36).toUpperCase()}-${idx}`;
-      }
-      seenBookingIds.add(bId);
-      cleanBookings.push({ ...b, id: bId });
-    });
-    targetDb.bookings = cleanBookings;
-  }
-
-  // 2. Deduplicate Staff
-  if (Array.isArray(targetDb.staff)) {
-    const seenStaffIds = new Set();
-    const cleanStaff = [];
-    targetDb.staff.forEach((st, idx) => {
-      let sId = st.id || st.ID;
-      if (!sId || seenStaffIds.has(sId)) {
-        const slug = (st.nickname || st.Nickname || st.name || "staff")
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, "");
-        sId = `stf-${slug || idx}`;
-        if (seenStaffIds.has(sId)) {
-          sId = `${sId}-${idx}`;
-        }
-      }
-      seenStaffIds.add(sId);
-      cleanStaff.push({ ...st, id: sId });
-    });
-    targetDb.staff = cleanStaff;
-  }
-
-  // 3. Deduplicate Services
-  if (Array.isArray(targetDb.services)) {
-    const seenSrvIds = new Set();
-    const cleanServices = [];
-    targetDb.services.forEach((s, idx) => {
-      let sId = s.id || s.ID;
-      if (!sId || seenSrvIds.has(sId)) {
-        sId = `srv-${Date.now().toString(36)}-${idx}`;
-      }
-      seenSrvIds.add(sId);
-      cleanServices.push({ ...s, id: sId });
-    });
-    targetDb.services = cleanServices;
-  }
-
-  // 4. Clean Customers
-  if (Array.isArray(targetDb.customers)) {
-    const seenPhones = new Set();
-    const cleanCustomers = [];
-    targetDb.customers.forEach((c) => {
-      const phone = formatGasPhone(c.customerPhone || c["Customer Phone"]);
-      if (phone && !seenPhones.has(phone)) {
-        seenPhones.add(phone);
-        cleanCustomers.push({
-          customerPhone: phone,
-          customerName: c.customerName || c["Customer Name"] || "",
-          customerEmail: c.customerEmail || c["Customer Email"] || "",
-          totalBookings: parseInt(c.totalBookings || c["Total Bookings"], 10) || 1,
-          totalSpent: parseFloat(c.totalSpent || c["Total Spent (THB)"]) || 0,
-          lastVisitDate: formatGasDate(c.lastVisitDate || c["Last Visit Date"]),
-          lineUserId: c.lineUserId || c["LINE User ID"] || ""
-        });
-      }
-    });
-    targetDb.customers = cleanCustomers;
-  }
-
-  return targetDb;
-}
-
-function saveDatabase() {
-  try {
-    const dir = path.dirname(DB_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    sanitizeDatabase(db);
-    fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
-  } catch (err) {
-    console.error("[Database] Error saving database.json:", err);
-  }
-}
-
-// Initial DB load & sanitization
-loadDatabase();
-
-// Standard daily time slots
-const ALL_TIME_SLOTS = [
-  "10:00", "11:00", "12:00", "13:00", "14:00",
-  "15:00", "16:00", "17:00", "18:00", "19:00"
-];
-
 // Formatting helpers for Google Apps Script data
 function formatGasDate(val) {
   if (!val) return "";
@@ -375,12 +273,246 @@ function formatGasTime(val) {
 
 function formatGasPhone(val) {
   if (!val) return "";
-  let str = String(val).trim();
+  let str = String(val).trim().replace(/[^0-9]/g, "");
   if (str.length === 9 && !str.startsWith("0")) {
     str = "0" + str;
   }
   return str;
 }
+
+// Data Sanitization & Strict Deduplication Helper (DISCARDS duplicates, NEVER clones them)
+function sanitizeDatabase(targetDb) {
+  if (!targetDb) return targetDb;
+
+  // 1. Deduplicate Services (Unique by ID and lowercased trimmed Name)
+  if (Array.isArray(targetDb.services)) {
+    const seenSrvIds = new Set();
+    const seenSrvNames = new Set();
+    const cleanServices = [];
+
+    targetDb.services.forEach((s) => {
+      if (!s) return;
+      const sId = (s.id || s.ID || "").toString().trim();
+      const sName = (s.name || s.Name || "").toString().trim().toLowerCase();
+      if (!sName) return;
+
+      if ((sId && seenSrvIds.has(sId)) || seenSrvNames.has(sName)) {
+        // Merge missing properties into existing
+        const existing = cleanServices.find(
+          (x) => (sId && x.id === sId) || (x.name && x.name.trim().toLowerCase() === sName)
+        );
+        if (existing) {
+          if (!existing.price && s.price) existing.price = parseFloat(s.price) || 0;
+          if (!existing.duration && s.duration) existing.duration = parseInt(s.duration, 10) || 60;
+          if (!existing.description && s.description) existing.description = s.description;
+          if ((!existing.icon || existing.icon === "Sparkles") && s.icon) existing.icon = s.icon;
+        }
+        return; // DISCARD DUPLICATE
+      }
+
+      const finalId = sId || `srv-${Date.now().toString(36)}-${cleanServices.length}`;
+      seenSrvIds.add(finalId);
+      seenSrvNames.add(sName);
+
+      cleanServices.push({
+        id: finalId,
+        name: s.name || s.Name || "",
+        category: s.category || s.Category || "General",
+        price: parseFloat(s.price || s.Price) || 0,
+        duration: parseInt(s.duration || s.DurationMinutes || s.Duration, 10) || 60,
+        description: s.description || s.Description || "",
+        icon: s.icon || s.Icon || "Sparkles"
+      });
+    });
+    targetDb.services = cleanServices;
+  }
+
+  // 2. Deduplicate Staff (Unique by ID and lowercased Name/Nickname)
+  if (Array.isArray(targetDb.staff)) {
+    const seenStaffIds = new Set();
+    const seenStaffNames = new Set();
+    const cleanStaff = [];
+
+    targetDb.staff.forEach((st) => {
+      if (!st) return;
+      const stId = (st.id || st.ID || "").toString().trim();
+      const stName = (st.name || st.Name || "").toString().trim().toLowerCase();
+      const stNick = (st.nickname || st.Nickname || "").toString().trim().toLowerCase();
+      if (!stName && !stNick) return;
+
+      const nameKey = stName || stNick;
+      if ((stId && seenStaffIds.has(stId)) || seenStaffNames.has(nameKey)) {
+        // Merge skills and properties into existing
+        const existing = cleanStaff.find(
+          (x) => (stId && x.id === stId) || (x.name && x.name.trim().toLowerCase() === nameKey)
+        );
+        if (existing) {
+          const incomingSkills = Array.isArray(st.skills)
+            ? st.skills
+            : (typeof st.skills === "string" ? st.skills.split(",").map((x) => x.trim()) : (typeof st.Services === "string" ? st.Services.split(",").map((x) => x.trim()) : []));
+          incomingSkills.forEach((sk) => {
+            if (sk && !existing.skills.includes(sk)) existing.skills.push(sk);
+          });
+          if (!existing.avatar && st.avatar) existing.avatar = st.avatar;
+          if (!existing.experience && st.experience) existing.experience = st.experience;
+          if (!existing.bio && st.bio) existing.bio = st.bio;
+        }
+        return; // DISCARD DUPLICATE
+      }
+
+      const slug = (st.nickname || st.Nickname || st.name || "staff").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const finalId = stId || `stf-${slug || cleanStaff.length}`;
+      seenStaffIds.add(finalId);
+      seenStaffNames.add(nameKey);
+
+      const skills = Array.isArray(st.skills)
+        ? st.skills
+        : (typeof st.skills === "string" ? st.skills.split(",").map((x) => x.trim()) : (typeof st.Services === "string" ? st.Services.split(",").map((x) => x.trim()) : []));
+
+      cleanStaff.push({
+        id: finalId,
+        name: st.name || st.Name || "",
+        nickname: st.nickname || st.Nickname || st.name || "",
+        role: st.role || st.Role || "Therapist",
+        experience: st.experience || st.Experience || "ประสบการณ์ 3 ปี",
+        rating: parseFloat(st.rating || st.Rating) || 5.0,
+        avatar: st.avatar || st.Avatar || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
+        skills: skills.filter(Boolean),
+        bio: st.bio || st.Bio || ""
+      });
+    });
+    targetDb.staff = cleanStaff;
+  }
+
+  // 3. Deduplicate Bookings (Unique by ID or Phone + Date + Time)
+  if (Array.isArray(targetDb.bookings)) {
+    const seenBookingIds = new Set();
+    const seenSignatures = new Set();
+    const cleanBookings = [];
+
+    targetDb.bookings.forEach((b) => {
+      if (!b) return;
+      const bId = (b.id || b.ID || "").toString().trim();
+      const phone = formatGasPhone(b.customerPhone || b.CustomerPhone);
+      const date = formatGasDate(b.date || b.Date);
+      const time = formatGasTime(b.time || b.Time);
+      const sig = phone && date && time ? `${phone}_${date}_${time}` : "";
+
+      if ((bId && seenBookingIds.has(bId)) || (sig && seenSignatures.has(sig))) {
+        // Update existing booking with more accurate details if available
+        const existing = cleanBookings.find(
+          (x) => (bId && x.id === bId) || (sig && `${formatGasPhone(x.customerPhone)}_${x.date}_${x.time}` === sig)
+        );
+        if (existing) {
+          if (b.status && b.status !== "pending" && existing.status === "pending") {
+            existing.status = b.status;
+          }
+          if (b.paymentStatus && b.paymentStatus !== "pending" && existing.paymentStatus === "pending") {
+            existing.paymentStatus = b.paymentStatus;
+          }
+          if (b.paymentSlipUrl && !existing.paymentSlipUrl) {
+            existing.paymentSlipUrl = b.paymentSlipUrl;
+          }
+          if (b.calendarEventId && !existing.calendarEventId) {
+            existing.calendarEventId = b.calendarEventId;
+          }
+        }
+        return; // DISCARD DUPLICATE! NEVER CREATE A NEW CLONED ID!
+      }
+
+      const finalId = bId || `BK-${Date.now().toString(36).toUpperCase()}-${cleanBookings.length}`;
+      seenBookingIds.add(finalId);
+      if (sig) seenSignatures.add(sig);
+
+      cleanBookings.push({
+        id: finalId,
+        createdAt: b.createdAt || b.CreatedAt || new Date().toISOString(),
+        status: b.status || b.Status || "pending",
+        date,
+        time,
+        serviceId: b.serviceId || b.ServiceId || "",
+        serviceName: b.serviceName || b.ServiceName || "",
+        servicePrice: parseFloat(b.servicePrice || b.ServicePrice) || 0,
+        serviceDuration: parseInt(b.serviceDuration || b.ServiceDuration, 10) || 60,
+        staffId: b.staffId || b.StaffId || "",
+        staffName: b.staffName || b.StaffName || "",
+        staffAvatar: b.staffAvatar || b.StaffAvatar || "",
+        customerName: b.customerName || b.CustomerName || "",
+        customerPhone: phone,
+        customerEmail: b.customerEmail || b.CustomerEmail || "",
+        specialRequest: b.specialRequest || b.SpecialRequest || "",
+        paymentStatus: b.paymentStatus || b.PaymentStatus || "pending",
+        paymentSlipUrl: b.paymentSlipUrl || b.PaymentSlipUrl || "",
+        calendarEventId: b.calendarEventId || b.CalendarEventId || "",
+        lineUserId: b.lineUserId || b.LineUserId || "",
+        lineDisplayName: b.lineDisplayName || b.LineDisplayName || ""
+      });
+    });
+    targetDb.bookings = cleanBookings;
+  }
+
+  // 4. Deduplicate Customers (Unique by 10-digit Phone)
+  if (Array.isArray(targetDb.customers)) {
+    const seenPhones = new Set();
+    const cleanCustomers = [];
+
+    targetDb.customers.forEach((c) => {
+      if (!c) return;
+      const phone = formatGasPhone(c.customerPhone || c["Customer Phone"]);
+      if (!phone) return;
+
+      if (seenPhones.has(phone)) {
+        const existing = cleanCustomers.find((x) => x.customerPhone === phone);
+        if (existing) {
+          existing.totalBookings = Math.max(existing.totalBookings || 1, parseInt(c.totalBookings || c["Total Bookings"], 10) || 1);
+          existing.totalSpent = Math.max(existing.totalSpent || 0, parseFloat(c.totalSpent || c["Total Spent (THB)"]) || 0);
+          if (c.customerName && !existing.customerName) existing.customerName = c.customerName;
+          if (c.customerEmail && !existing.customerEmail) existing.customerEmail = c.customerEmail;
+          if (c.lineUserId && !existing.lineUserId) existing.lineUserId = c.lineUserId;
+          const vDate = formatGasDate(c.lastVisitDate || c["Last Visit Date"]);
+          if (vDate && vDate > (existing.lastVisitDate || "")) existing.lastVisitDate = vDate;
+        }
+        return; // DISCARD DUPLICATE
+      }
+
+      seenPhones.add(phone);
+      cleanCustomers.push({
+        customerPhone: phone,
+        customerName: c.customerName || c["Customer Name"] || "",
+        customerEmail: c.customerEmail || c["Customer Email"] || "",
+        totalBookings: parseInt(c.totalBookings || c["Total Bookings"], 10) || 1,
+        totalSpent: parseFloat(c.totalSpent || c["Total Spent (THB)"]) || 0,
+        lastVisitDate: formatGasDate(c.lastVisitDate || c["Last Visit Date"]),
+        lineUserId: c.lineUserId || c["LINE User ID"] || ""
+      });
+    });
+    targetDb.customers = cleanCustomers;
+  }
+
+  return targetDb;
+}
+
+function saveDatabase() {
+  try {
+    const dir = path.dirname(DB_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    sanitizeDatabase(db);
+    fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
+  } catch (err) {
+    console.error("[Database] Error saving database.json:", err);
+  }
+}
+
+// Initial DB load & sanitization
+loadDatabase();
+
+// Standard daily time slots
+const ALL_TIME_SLOTS = [
+  "10:00", "11:00", "12:00", "13:00", "14:00",
+  "15:00", "16:00", "17:00", "18:00", "19:00"
+];
 
 // Status tracking for real-time GAS sync
 let lastGasSync = {
@@ -390,9 +522,14 @@ let lastGasSync = {
   action: null
 };
 
+// Concurrency & Cooldown Locks to prevent reading stale data after local mutations
+let lastPushTimestamp = 0;
+let isPushingToGas = false;
+
 // Helper: sync booking to Google Apps Script Web App asynchronously & update Calendar
 async function syncBookingToGas(booking) {
   if (!db.settings.gasWebAppUrl) return;
+  lastPushTimestamp = Date.now();
   try {
     const url = db.settings.gasWebAppUrl.trim();
     if (!url.startsWith("http")) return;
@@ -434,6 +571,7 @@ async function syncBookingToGas(booking) {
 // Helper: sync status change to Google Apps Script Web App
 async function syncStatusToGas(bookingId, status, updates = {}) {
   if (!db.settings.gasWebAppUrl) return;
+  lastPushTimestamp = Date.now();
   try {
     const url = db.settings.gasWebAppUrl.trim();
     if (!url.startsWith("http")) return;
@@ -470,6 +608,7 @@ async function syncStatusToGas(bookingId, status, updates = {}) {
 // Helper: sync delete booking to Google Apps Script Web App & Google Calendar
 async function syncDeleteToGas(bookingId) {
   if (!db.settings.gasWebAppUrl) return;
+  lastPushTimestamp = Date.now();
   try {
     const url = db.settings.gasWebAppUrl.trim();
     if (!url.startsWith("http")) return;
@@ -507,6 +646,8 @@ async function autoSyncToGas() {
   const url = db.settings.gasWebAppUrl.trim();
   if (!url.startsWith("http")) return;
 
+  lastPushTimestamp = Date.now();
+  isPushingToGas = true;
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -548,6 +689,8 @@ async function autoSyncToGas() {
     }
   } catch (err) {
     console.warn("[GAS Auto-Sync] Error triggering sync:", err.message);
+  } finally {
+    isPushingToGas = false;
   }
 }
 
@@ -556,6 +699,11 @@ async function pullFromGas(isBackground = false) {
   if (!db.settings.gasWebAppUrl) return null;
   const url = db.settings.gasWebAppUrl.trim();
   if (!url.startsWith("http")) return null;
+
+  // Background cooldown protection: Skip pull if we pushed recently (<30s) or push is in progress
+  if (isBackground && (isPushingToGas || Date.now() - lastPushTimestamp < 30000)) {
+    return db;
+  }
 
   try {
     const pullUrl = url + (url.includes("?") ? "&" : "?") + "action=pullAll";
@@ -573,103 +721,131 @@ async function pullFromGas(isBackground = false) {
         db.settings.googleDriveFolderUrl = result.driveFolderUrl;
       }
 
-      // Format & deduplicate pulled bookings
+      // 1. Smart Merge Bookings (Upsert by ID or Phone + Date + Time)
       if (Array.isArray(result.data.bookings) && result.data.bookings.length > 0) {
-        const seenBIds = new Set();
-        const pulledBookings = [];
-        result.data.bookings.forEach((b, idx) => {
-          let bId = b.ID || b.id;
-          if (!bId || seenBIds.has(bId)) {
-            bId = `BK-${Date.now().toString(36).toUpperCase()}-${idx}`;
+        result.data.bookings.forEach((b) => {
+          const bId = (b.ID || b.id || "").toString().trim();
+          const phone = formatGasPhone(b.CustomerPhone || b.customerPhone);
+          const date = formatGasDate(b.Date || b.date);
+          const time = formatGasTime(b.Time || b.time);
+          const sig = phone && date && time ? `${phone}_${date}_${time}` : "";
+
+          const existing = db.bookings.find(
+            (x) => (bId && x.id === bId) || (sig && `${formatGasPhone(x.customerPhone)}_${x.date}_${x.time}` === sig)
+          );
+
+          if (existing) {
+            if (b.Status || b.status) existing.status = b.Status || b.status;
+            if (b.PaymentStatus || b.paymentStatus) existing.paymentStatus = b.PaymentStatus || b.paymentStatus;
+            if (b.PaymentSlipUrl || b.paymentSlipUrl) existing.paymentSlipUrl = b.PaymentSlipUrl || b.paymentSlipUrl;
+            if (b.CalendarEventId || b.calendarEventId) existing.calendarEventId = b.CalendarEventId || b.calendarEventId;
+          } else {
+            db.bookings.push({
+              id: bId || `BK-${Date.now().toString(36).toUpperCase()}-${db.bookings.length}`,
+              createdAt: b.CreatedAt || b.createdAt || new Date().toISOString(),
+              status: b.Status || b.status || "pending",
+              date,
+              time,
+              serviceId: b.ServiceId || b.serviceId || "",
+              serviceName: b.ServiceName || b.serviceName || "",
+              servicePrice: parseFloat(b.ServicePrice || b.servicePrice) || 0,
+              serviceDuration: parseInt(b.ServiceDuration || b.serviceDuration, 10) || 60,
+              staffId: b.StaffId || b.staffId || "",
+              staffName: b.StaffName || b.staffName || "",
+              customerName: b.CustomerName || b.customerName || "",
+              customerPhone: phone,
+              customerEmail: b.CustomerEmail || b.customerEmail || "",
+              specialRequest: b.SpecialRequest || b.specialRequest || "",
+              paymentStatus: b.PaymentStatus || b.paymentStatus || "pending",
+              paymentSlipUrl: b.PaymentSlipUrl || b.paymentSlipUrl || "",
+              calendarEventId: b.CalendarEventId || b.calendarEventId || "",
+              lineUserId: b.LineUserId || b.lineUserId || "",
+              lineDisplayName: b.LineDisplayName || b.lineDisplayName || ""
+            });
           }
-          seenBIds.add(bId);
-          pulledBookings.push({
-            id: bId,
-            createdAt: b.CreatedAt || b.createdAt || new Date().toISOString(),
-            status: b.Status || b.status || "pending",
-            date: formatGasDate(b.Date || b.date),
-            time: formatGasTime(b.Time || b.time),
-            serviceId: b.ServiceId || b.serviceId || "",
-            serviceName: b.ServiceName || b.serviceName || "",
-            servicePrice: parseFloat(b.ServicePrice || b.servicePrice) || 0,
-            serviceDuration: parseInt(b.ServiceDuration || b.serviceDuration, 10) || 60,
-            staffId: b.StaffId || b.staffId || "",
-            staffName: b.StaffName || b.staffName || "",
-            customerName: b.CustomerName || b.customerName || "",
-            customerPhone: formatGasPhone(b.CustomerPhone || b.customerPhone),
-            customerEmail: b.CustomerEmail || b.customerEmail || "",
-            specialRequest: b.SpecialRequest || b.specialRequest || "",
-            paymentStatus: b.PaymentStatus || b.paymentStatus || "pending",
-            paymentSlipUrl: b.PaymentSlipUrl || b.paymentSlipUrl || "",
-            calendarEventId: b.CalendarEventId || b.calendarEventId || "",
-            lineUserId: b.LineUserId || b.lineUserId || "",
-            lineDisplayName: b.LineDisplayName || b.lineDisplayName || ""
-          });
         });
-        db.bookings = pulledBookings;
       }
 
-      // Format & deduplicate services
+      // 2. Smart Merge Services (Upsert by ID or lowercased Name)
       if (Array.isArray(result.data.services) && result.data.services.length > 0) {
-        const seenSrv = new Set();
-        const pulledServices = [];
-        result.data.services.forEach((s, idx) => {
-          let sId = s.ID || s.id;
-          if (!sId || seenSrv.has(sId)) {
-            sId = `srv-${Date.now().toString(36)}-${idx}`;
+        result.data.services.forEach((s) => {
+          const sId = (s.ID || s.id || "").toString().trim();
+          const sName = (s.Name || s.name || "").toString().trim().toLowerCase();
+          if (!sName) return;
+
+          const existing = db.services.find(
+            (x) => (sId && x.id === sId) || (x.name && x.name.trim().toLowerCase() === sName)
+          );
+
+          if (existing) {
+            if (s.Price || s.price) existing.price = parseFloat(s.Price || s.price) || existing.price;
+            if (s.DurationMinutes || s.duration) existing.duration = parseInt(s.DurationMinutes || s.duration, 10) || existing.duration;
+            if (s.Description || s.description) existing.description = s.Description || s.description;
+            if (s.Icon || s.icon) existing.icon = s.Icon || s.icon;
+          } else {
+            db.services.push({
+              id: sId || `srv-${Date.now().toString(36)}-${db.services.length}`,
+              name: s.Name || s.name || "",
+              category: s.Category || s.category || "General",
+              price: parseFloat(s.Price || s.price) || 0,
+              duration: parseInt(s.DurationMinutes || s.duration, 10) || 60,
+              description: s.Description || s.description || "",
+              icon: s.Icon || s.icon || "Sparkles"
+            });
           }
-          seenSrv.add(sId);
-          pulledServices.push({
-            id: sId,
-            name: s.Name || s.name || "",
-            category: s.Category || s.category || "General",
-            price: parseFloat(s.Price || s.price) || 0,
-            duration: parseInt(s.DurationMinutes || s.duration, 10) || 60,
-            description: s.Description || s.description || "",
-            icon: s.Icon || s.icon || "Sparkles"
-          });
         });
-        db.services = pulledServices;
       }
 
-      // Format & deduplicate staff
+      // 3. Smart Merge Staff (Upsert by ID or lowercased Name/Nickname)
       if (Array.isArray(result.data.staff) && result.data.staff.length > 0) {
-        const seenStaff = new Set();
-        const pulledStaff = [];
-        result.data.staff.forEach((st, idx) => {
-          let stId = st.ID || st.id;
-          if (!stId || seenStaff.has(stId)) {
+        result.data.staff.forEach((st) => {
+          const stId = (st.ID || st.id || "").toString().trim();
+          const stName = (st.Name || st.name || "").toString().trim().toLowerCase();
+          const stNick = (st.Nickname || st.nickname || "").toString().trim().toLowerCase();
+          const nameKey = stName || stNick;
+          if (!nameKey) return;
+
+          const existing = db.staff.find(
+            (x) => (stId && x.id === stId) || (x.name && x.name.trim().toLowerCase() === nameKey)
+          );
+
+          if (existing) {
+            if (st.Role || st.role) existing.role = st.Role || st.role;
+            if (st.Experience || st.experience) existing.experience = st.Experience || st.experience;
+            if (st.Rating || st.rating) existing.rating = parseFloat(st.Rating || st.rating) || existing.rating;
+            if (st.Avatar || st.avatar) existing.avatar = st.Avatar || st.avatar;
+            if (st.Bio || st.bio) existing.bio = st.Bio || st.bio;
+          } else {
             const nick = (st.Nickname || st.Name || "staff").toLowerCase().replace(/[^a-z0-9]/g, "");
-            stId = `stf-${nick || idx}`;
-            if (seenStaff.has(stId)) {
-              stId = `${stId}-${idx}`;
-            }
+            db.staff.push({
+              id: stId || `stf-${nick || db.staff.length}`,
+              name: st.Name || st.name || "",
+              nickname: st.Nickname || st.nickname || st.Name || "",
+              role: st.Role || st.role || "Therapist",
+              experience: st.Experience || st.experience || "ประสบการณ์ 3 ปี",
+              rating: parseFloat(st.Rating || st.rating) || 5.0,
+              avatar: st.Avatar || st.avatar || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
+              skills: typeof st.Services === "string" ? st.Services.split(",").map(x => x.trim()) : (st.skills || []),
+              bio: st.Bio || st.bio || ""
+            });
           }
-          seenStaff.add(stId);
-          pulledStaff.push({
-            id: stId,
-            name: st.Name || st.name || "",
-            nickname: st.Nickname || st.nickname || st.Name || "",
-            role: st.Role || st.role || "Therapist",
-            experience: st.Experience || st.experience || "",
-            rating: parseFloat(st.Rating || st.rating) || 5.0,
-            avatar: st.Avatar || st.avatar || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
-            skills: typeof st.Services === "string" ? st.Services.split(",").map(x => x.trim()) : (st.skills || []),
-            bio: st.Bio || st.bio || ""
-          });
         });
-        db.staff = pulledStaff;
       }
 
-      // Format customers
+      // 4. Smart Merge Customers (Upsert by Phone)
       if (Array.isArray(result.data.customers) && result.data.customers.length > 0) {
-        const seenPhone = new Set();
-        const pulledCustomers = [];
         result.data.customers.forEach((c) => {
           const phone = formatGasPhone(c["Customer Phone"] || c.customerPhone);
-          if (phone && !seenPhone.has(phone)) {
-            seenPhone.add(phone);
-            pulledCustomers.push({
+          if (!phone) return;
+
+          const existing = db.customers.find((x) => x.customerPhone === phone);
+          if (existing) {
+            existing.totalBookings = Math.max(existing.totalBookings || 1, parseInt(c["Total Bookings"] || c.totalBookings, 10) || 1);
+            existing.totalSpent = Math.max(existing.totalSpent || 0, parseFloat(c["Total Spent (THB)"] || c.totalSpent) || 0);
+            if (c["Customer Name"] || c.customerName) existing.customerName = c["Customer Name"] || c.customerName;
+            if (c["Customer Email"] || c.customerEmail) existing.customerEmail = c["Customer Email"] || c.customerEmail;
+          } else {
+            db.customers.push({
               customerPhone: phone,
               customerName: c["Customer Name"] || c.customerName || "",
               customerEmail: c["Customer Email"] || c.customerEmail || "",
@@ -680,7 +856,6 @@ async function pullFromGas(isBackground = false) {
             });
           }
         });
-        db.customers = pulledCustomers;
       }
 
       sanitizeDatabase(db);
@@ -784,7 +959,7 @@ async function startServer() {
   });
 
   // 4. POST /api/bookings
-  app.post("/api/bookings", (req, res) => {
+  app.post("/api/bookings", async (req, res) => {
     loadDatabase();
     const {
       serviceId,
@@ -906,9 +1081,8 @@ async function startServer() {
 
     saveDatabase();
 
-    // Async sync with Google Apps Script
-    syncBookingToGas(newBooking);
-    autoSyncToGas();
+    // Sync to Google Apps Script (Adds to sheet, Calendar, Email - no duplicate pushAll)
+    await syncBookingToGas(newBooking);
 
     return res.status(201).json({
       success: true,
@@ -1069,7 +1243,7 @@ async function startServer() {
   app.put("/api/admin/settings", handleUpdateSettings);
 
   // Admin Create Manual Booking
-  app.post("/api/admin/bookings", (req, res) => {
+  app.post("/api/admin/bookings", async (req, res) => {
     loadDatabase();
     const {
       serviceId,
@@ -1146,8 +1320,7 @@ async function startServer() {
     }
 
     saveDatabase();
-    syncBookingToGas(newBooking);
-    autoSyncToGas();
+    await syncBookingToGas(newBooking);
 
     res.status(201).json({
       success: true,
@@ -1157,7 +1330,7 @@ async function startServer() {
   });
 
   // Change Booking Status
-  app.patch("/api/admin/bookings/:id/status", (req, res) => {
+  app.patch("/api/admin/bookings/:id/status", async (req, res) => {
     loadDatabase();
     const { id } = req.params;
     const { status, paymentStatus, paymentSlipUrl } = req.body;
@@ -1173,11 +1346,10 @@ async function startServer() {
 
     saveDatabase();
 
-    // Async sync to GAS
     if (status) {
-      syncStatusToGas(id, status);
+      await syncStatusToGas(id, status);
     }
-    autoSyncToGas();
+    await autoSyncToGas();
 
     res.json({
       success: true,
@@ -1187,7 +1359,7 @@ async function startServer() {
   });
 
   // Delete Booking
-  app.delete("/api/admin/bookings/:id", (req, res) => {
+  app.delete("/api/admin/bookings/:id", async (req, res) => {
     loadDatabase();
     const { id } = req.params;
     const initialLen = db.bookings.length;
@@ -1198,8 +1370,8 @@ async function startServer() {
     }
 
     saveDatabase();
-    syncDeleteToGas(id);
-    autoSyncToGas();
+    await syncDeleteToGas(id);
+    await autoSyncToGas();
     res.json({
       success: true,
       message: "ลบรายการจองสำเร็จเรียบร้อย"
@@ -1207,7 +1379,7 @@ async function startServer() {
   });
 
   // Create Service
-  app.post("/api/admin/services", (req, res) => {
+  app.post("/api/admin/services", async (req, res) => {
     loadDatabase();
     const { name, category, price, duration, description, icon } = req.body;
     if (!name || !price) {
@@ -1226,7 +1398,7 @@ async function startServer() {
 
     db.services.push(newService);
     saveDatabase();
-    autoSyncToGas();
+    await autoSyncToGas();
 
     res.status(201).json({
       success: true,
@@ -1236,7 +1408,7 @@ async function startServer() {
   });
 
   // Update Service
-  app.put("/api/admin/services/:id", (req, res) => {
+  app.put("/api/admin/services/:id", async (req, res) => {
     loadDatabase();
     const { id } = req.params;
     const idx = db.services.findIndex((s) => s.id === id);
@@ -1252,7 +1424,7 @@ async function startServer() {
     };
 
     saveDatabase();
-    autoSyncToGas();
+    await autoSyncToGas();
     res.json({
       success: true,
       message: "อัปเดตข้อมูลบริการสำเร็จ",
@@ -1261,12 +1433,12 @@ async function startServer() {
   });
 
   // Delete Service
-  app.delete("/api/admin/services/:id", (req, res) => {
+  app.delete("/api/admin/services/:id", async (req, res) => {
     loadDatabase();
     const { id } = req.params;
     db.services = db.services.filter((s) => s.id !== id);
     saveDatabase();
-    autoSyncToGas();
+    await autoSyncToGas();
     res.json({
       success: true,
       message: "ลบบริการสำเร็จ"
@@ -1274,7 +1446,7 @@ async function startServer() {
   });
 
   // Create Staff
-  app.post("/api/admin/staff", (req, res) => {
+  app.post("/api/admin/staff", async (req, res) => {
     loadDatabase();
     const { name, nickname, role, experience, rating, avatar, skills, bio } = req.body;
     if (!name) {
@@ -1295,7 +1467,7 @@ async function startServer() {
 
     db.staff.push(newStaff);
     saveDatabase();
-    autoSyncToGas();
+    await autoSyncToGas();
 
     res.status(201).json({
       success: true,
@@ -1305,7 +1477,7 @@ async function startServer() {
   });
 
   // Update Staff
-  app.put("/api/admin/staff/:id", (req, res) => {
+  app.put("/api/admin/staff/:id", async (req, res) => {
     loadDatabase();
     const { id } = req.params;
     const idx = db.staff.findIndex((st) => st.id === id);
@@ -1322,7 +1494,7 @@ async function startServer() {
     };
 
     saveDatabase();
-    autoSyncToGas();
+    await autoSyncToGas();
     res.json({
       success: true,
       message: "อัปเดตข้อมูลช่างสำเร็จ",
@@ -1331,12 +1503,12 @@ async function startServer() {
   });
 
   // Delete Staff
-  app.delete("/api/admin/staff/:id", (req, res) => {
+  app.delete("/api/admin/staff/:id", async (req, res) => {
     loadDatabase();
     const { id } = req.params;
     db.staff = db.staff.filter((s) => s.id !== id);
     saveDatabase();
-    autoSyncToGas();
+    await autoSyncToGas();
     res.json({
       success: true,
       message: "ลบรายชื่อช่างสำเร็จ"
@@ -1648,66 +1820,137 @@ async function startServer() {
     const { action, data } = req.body;
     if (action === "syncFromSheet" && data) {
       if (Array.isArray(data.bookings) && data.bookings.length > 0) {
-        db.bookings = data.bookings.map((b) => ({
-          id: b.ID || b.id || `BK-${Date.now()}`,
-          createdAt: b.CreatedAt || b.createdAt || new Date().toISOString(),
-          status: b.Status || b.status || "pending",
-          date: formatGasDate(b.Date || b.date),
-          time: formatGasTime(b.Time || b.time),
-          serviceName: b.ServiceName || b.serviceName || "",
-          servicePrice: parseFloat(b.ServicePrice || b.servicePrice) || 0,
-          serviceDuration: parseInt(b.ServiceDuration || b.serviceDuration, 10) || 60,
-          staffName: b.StaffName || b.staffName || "",
-          customerName: b.CustomerName || b.customerName || "",
-          customerPhone: formatGasPhone(b.CustomerPhone || b.customerPhone),
-          customerEmail: b.CustomerEmail || b.customerEmail || "",
-          specialRequest: b.SpecialRequest || b.specialRequest || "",
-          paymentStatus: b.PaymentStatus || b.paymentStatus || "pending",
-          paymentSlipUrl: b.PaymentSlipUrl || b.paymentSlipUrl || "",
-          calendarEventId: b.CalendarEventId || b.calendarEventId || "",
-          lineUserId: b.LineUserId || b.lineUserId || "",
-          lineDisplayName: b.LineDisplayName || b.lineDisplayName || ""
-        }));
+        data.bookings.forEach((b) => {
+          const bId = (b.ID || b.id || "").toString().trim();
+          const phone = formatGasPhone(b.CustomerPhone || b.customerPhone);
+          const date = formatGasDate(b.Date || b.date);
+          const time = formatGasTime(b.Time || b.time);
+          const sig = phone && date && time ? `${phone}_${date}_${time}` : "";
+
+          const existing = db.bookings.find(
+            (x) => (bId && x.id === bId) || (sig && `${formatGasPhone(x.customerPhone)}_${x.date}_${x.time}` === sig)
+          );
+
+          if (existing) {
+            if (b.Status || b.status) existing.status = b.Status || b.status;
+            if (b.PaymentStatus || b.paymentStatus) existing.paymentStatus = b.PaymentStatus || b.paymentStatus;
+            if (b.PaymentSlipUrl || b.paymentSlipUrl) existing.paymentSlipUrl = b.PaymentSlipUrl || b.paymentSlipUrl;
+            if (b.CalendarEventId || b.calendarEventId) existing.calendarEventId = b.CalendarEventId || b.calendarEventId;
+          } else {
+            db.bookings.push({
+              id: bId || `BK-${Date.now().toString(36).toUpperCase()}-${db.bookings.length}`,
+              createdAt: b.CreatedAt || b.createdAt || new Date().toISOString(),
+              status: b.Status || b.status || "pending",
+              date,
+              time,
+              serviceName: b.ServiceName || b.serviceName || "",
+              servicePrice: parseFloat(b.ServicePrice || b.servicePrice) || 0,
+              serviceDuration: parseInt(b.ServiceDuration || b.serviceDuration, 10) || 60,
+              staffName: b.StaffName || b.staffName || "",
+              customerName: b.CustomerName || b.customerName || "",
+              customerPhone: phone,
+              customerEmail: b.CustomerEmail || b.customerEmail || "",
+              specialRequest: b.SpecialRequest || b.specialRequest || "",
+              paymentStatus: b.PaymentStatus || b.paymentStatus || "pending",
+              paymentSlipUrl: b.PaymentSlipUrl || b.paymentSlipUrl || "",
+              calendarEventId: b.CalendarEventId || b.calendarEventId || "",
+              lineUserId: b.LineUserId || b.lineUserId || "",
+              lineDisplayName: b.LineDisplayName || b.lineDisplayName || ""
+            });
+          }
+        });
       }
 
       if (Array.isArray(data.services) && data.services.length > 0) {
-        db.services = data.services.map((s) => ({
-          id: s.ID || s.id || `srv-${Date.now()}`,
-          name: s.Name || s.name || "",
-          category: s.Category || s.category || "General",
-          price: parseFloat(s.Price || s.price) || 0,
-          duration: parseInt(s.DurationMinutes || s.duration, 10) || 60,
-          description: s.Description || s.description || "",
-          icon: s.Icon || s.icon || "Sparkles"
-        }));
+        data.services.forEach((s) => {
+          const sId = (s.ID || s.id || "").toString().trim();
+          const sName = (s.Name || s.name || "").toString().trim().toLowerCase();
+          if (!sName) return;
+
+          const existing = db.services.find(
+            (x) => (sId && x.id === sId) || (x.name && x.name.trim().toLowerCase() === sName)
+          );
+
+          if (existing) {
+            if (s.Price || s.price) existing.price = parseFloat(s.Price || s.price) || existing.price;
+            if (s.DurationMinutes || s.duration) existing.duration = parseInt(s.DurationMinutes || s.duration, 10) || existing.duration;
+            if (s.Description || s.description) existing.description = s.Description || s.description;
+            if (s.Icon || s.icon) existing.icon = s.Icon || s.icon;
+          } else {
+            db.services.push({
+              id: sId || `srv-${Date.now().toString(36)}-${db.services.length}`,
+              name: s.Name || s.name || "",
+              category: s.Category || s.category || "General",
+              price: parseFloat(s.Price || s.price) || 0,
+              duration: parseInt(s.DurationMinutes || s.duration, 10) || 60,
+              description: s.Description || s.description || "",
+              icon: s.Icon || s.icon || "Sparkles"
+            });
+          }
+        });
       }
 
       if (Array.isArray(data.staff) && data.staff.length > 0) {
-        db.staff = data.staff.map((st) => ({
-          id: st.ID || st.id || `stf-${Date.now()}`,
-          name: st.Name || st.name || "",
-          nickname: st.Nickname || st.nickname || st.Name || "",
-          role: st.Role || st.role || "Therapist",
-          experience: st.Experience || st.experience || "",
-          rating: parseFloat(st.Rating || st.rating) || 5.0,
-          avatar: st.Avatar || st.avatar || "",
-          skills: typeof st.Services === "string" ? st.Services.split(",").map(x => x.trim()) : (st.skills || []),
-          bio: st.Bio || st.bio || ""
-        }));
+        data.staff.forEach((st) => {
+          const stId = (st.ID || st.id || "").toString().trim();
+          const stName = (st.Name || st.name || "").toString().trim().toLowerCase();
+          const stNick = (st.Nickname || st.nickname || "").toString().trim().toLowerCase();
+          const nameKey = stName || stNick;
+          if (!nameKey) return;
+
+          const existing = db.staff.find(
+            (x) => (stId && x.id === stId) || (x.name && x.name.trim().toLowerCase() === nameKey)
+          );
+
+          if (existing) {
+            if (st.Role || st.role) existing.role = st.Role || st.role;
+            if (st.Experience || st.experience) existing.experience = st.Experience || st.experience;
+            if (st.Rating || st.rating) existing.rating = parseFloat(st.Rating || st.rating) || existing.rating;
+            if (st.Avatar || st.avatar) existing.avatar = st.Avatar || st.avatar;
+            if (st.Bio || st.bio) existing.bio = st.Bio || st.bio;
+          } else {
+            const nick = (st.Nickname || st.Name || "staff").toLowerCase().replace(/[^a-z0-9]/g, "");
+            db.staff.push({
+              id: stId || `stf-${nick || db.staff.length}`,
+              name: st.Name || st.name || "",
+              nickname: st.Nickname || st.nickname || st.Name || "",
+              role: st.Role || st.role || "Therapist",
+              experience: st.Experience || st.experience || "ประสบการณ์ 3 ปี",
+              rating: parseFloat(st.Rating || st.rating) || 5.0,
+              avatar: st.Avatar || st.avatar || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
+              skills: typeof st.Services === "string" ? st.Services.split(",").map((x) => x.trim()) : (st.skills || []),
+              bio: st.Bio || st.bio || ""
+            });
+          }
+        });
       }
 
       if (Array.isArray(data.customers) && data.customers.length > 0) {
-        db.customers = data.customers.map((c) => ({
-          customerPhone: formatGasPhone(c["Customer Phone"] || c.customerPhone),
-          customerName: c["Customer Name"] || c.customerName || "",
-          customerEmail: c["Customer Email"] || c.customerEmail || "",
-          totalBookings: parseInt(c["Total Bookings"] || c.totalBookings, 10) || 1,
-          totalSpent: parseFloat(c["Total Spent (THB)"] || c.totalSpent) || 0,
-          lastVisitDate: formatGasDate(c["Last Visit Date"] || c.lastVisitDate),
-          lineUserId: c["LINE User ID"] || c.lineUserId || ""
-        }));
+        data.customers.forEach((c) => {
+          const phone = formatGasPhone(c["Customer Phone"] || c.customerPhone);
+          if (!phone) return;
+
+          const existing = db.customers.find((x) => x.customerPhone === phone);
+          if (existing) {
+            existing.totalBookings = Math.max(existing.totalBookings || 1, parseInt(c["Total Bookings"] || c.totalBookings, 10) || 1);
+            existing.totalSpent = Math.max(existing.totalSpent || 0, parseFloat(c["Total Spent (THB)"] || c.totalSpent) || 0);
+            if (c["Customer Name"] || c.customerName) existing.customerName = c["Customer Name"] || c.customerName;
+            if (c["Customer Email"] || c.customerEmail) existing.customerEmail = c["Customer Email"] || c.customerEmail;
+          } else {
+            db.customers.push({
+              customerPhone: phone,
+              customerName: c["Customer Name"] || c.customerName || "",
+              customerEmail: c["Customer Email"] || c.customerEmail || "",
+              totalBookings: parseInt(c["Total Bookings"] || c.totalBookings, 10) || 1,
+              totalSpent: parseFloat(c["Total Spent (THB)"] || c.totalSpent) || 0,
+              lastVisitDate: formatGasDate(c["Last Visit Date"] || c.lastVisitDate),
+              lineUserId: c["LINE User ID"] || c.lineUserId || ""
+            });
+          }
+        });
       }
 
+      sanitizeDatabase(db);
       saveDatabase();
       return res.json({
         success: true,
