@@ -91,19 +91,30 @@ export default function AdminStaffTab({
   return (
     <div className="space-y-6">
       {/* Header with Add Button */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-serif text-gray-800">ทีมช่างผู้เชี่ยวชาญ</h3>
-          <p className="text-xs text-gray-500">
-            จัดการรายชื่อช่าง ประสบการณ์ ทักษะบริการ และคะแนนรีวิว ({staff.length} ท่าน)
-          </p>
+      <div className="bg-white rounded-2xl border border-stone-200/80 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-[#D4A373]/15 border border-[#D4A373]/30 flex items-center justify-center shrink-0 shadow-xs">
+            <UserCheck className="w-5 h-5 sm:w-6 sm:h-6 text-[#b07e4c]" />
+          </div>
+          <div>
+            <span className="text-[10px] font-bold tracking-wider text-[#b07e4c] uppercase block mb-0.5">
+              Staff & Specialists
+            </span>
+            <h3 className="text-base sm:text-lg font-semibold text-stone-900 tracking-tight">
+              ทีมช่างผู้เชี่ยวชาญ
+            </h3>
+            <p className="text-xs text-stone-500 mt-0.5">
+              จัดการรายชื่อช่าง ประสบการณ์ ทักษะบริการ และคะแนนรีวิว ({staff.length} ท่าน)
+            </p>
+          </div>
         </div>
+
         <button
           onClick={handleOpenCreate}
-          className="flex items-center gap-1.5 px-4 py-2 bg-[#D4A373] hover:bg-[#c49262] text-white rounded-xl text-xs font-semibold shadow-xs transition-colors"
+          className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-gradient-to-r from-[#b07e4c] to-[#c49262] hover:from-[#9d6c3b] hover:to-[#b07e4c] text-white rounded-xl text-xs font-semibold shadow-xs hover:shadow-md transition-all cursor-pointer active:scale-95"
         >
           <Plus className="w-4 h-4" />
-          <span>เพิ่มช่างใหม่</span>
+          <span>+ เพิ่มช่างใหม่</span>
         </button>
       </div>
 
@@ -112,7 +123,7 @@ export default function AdminStaffTab({
         {staff.map((st, idx) => (
           <div
             key={`${st.id || "staff"}-${idx}`}
-            className="bg-white rounded-2xl border border-gray-100 p-5 shadow-xs flex flex-col justify-between hover:border-[#D4A373]/40 transition-colors"
+            className="bg-white rounded-2xl border border-stone-200/80 p-5 shadow-xs flex flex-col justify-between hover:border-[#D4A373]/60 hover:shadow-md transition-all group"
           >
             <div className="space-y-4">
               <div className="flex items-start gap-4">
@@ -122,15 +133,15 @@ export default function AdminStaffTab({
                     "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&auto=format&fit=crop&q=80"
                   }
                   alt={st.name}
-                  className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-xs shrink-0"
+                  className="w-16 h-16 rounded-2xl object-cover border border-stone-200 shadow-xs shrink-0 group-hover:scale-105 transition-transform"
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
-                    <h4 className="font-serif text-base font-semibold text-gray-900 truncate">
+                    <h4 className="text-sm sm:text-base font-semibold text-stone-900 truncate">
                       {st.name}
                     </h4>
-                    <div className="flex items-center gap-1 text-amber-500 text-xs font-bold bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
-                      <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                    <div className="flex items-center gap-1 text-amber-600 text-xs font-bold bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200/80">
+                      <Star className="w-3 h-3 fill-amber-400 text-amber-500" />
                       <span>{st.rating || "5.0"}</span>
                     </div>
                   </div>

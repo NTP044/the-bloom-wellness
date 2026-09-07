@@ -288,11 +288,11 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 pb-24 md:pb-10">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20">
             <div className="w-8 h-8 border-2 border-[#D4A373] border-t-transparent rounded-full animate-spin mb-3" />
-            <p className="text-xs text-gray-500 font-medium">กำลังโหลดฐานข้อมูล The Bloom Studio...</p>
+            <p className="text-xs text-stone-500 font-medium">กำลังโหลดฐานข้อมูล The Bloom Studio...</p>
           </div>
         ) : (
           <div>
@@ -348,7 +348,7 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
 
       {/* Floating Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 animate-in slide-in-from-bottom-3 duration-300">
+        <div className="fixed bottom-20 md:bottom-5 right-5 z-50 animate-in slide-in-from-bottom-3 duration-300">
           <div
             className={`px-4 py-3 rounded-xl shadow-lg border text-xs font-medium flex items-center gap-2 ${
               toastMessage.type === "error"
