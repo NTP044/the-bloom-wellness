@@ -3,6 +3,7 @@ import {
   CalendarDays,
   Sparkles,
   Users,
+  UserCheck,
   FileSpreadsheet,
   Store,
   LogOut,
@@ -37,6 +38,12 @@ export default function AdminNavbar({
       label: "ช่าง",
       icon: Users,
       badge: counts.staff
+    },
+    {
+      id: "customers",
+      label: "ลูกค้า CRM",
+      icon: UserCheck,
+      badge: counts.customers
     },
     {
       id: "sheet",

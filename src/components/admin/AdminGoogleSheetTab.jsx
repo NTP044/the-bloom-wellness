@@ -376,11 +376,11 @@ export default function AdminGoogleSheetTab({
           </div>
         </div>
 
-        {/* Counts Comparison Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {/* Counts Comparison Grid (All 5 Tabs) */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <div className="p-3 bg-gray-50/80 rounded-xl border border-gray-100">
             <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">
-              คิวจอง (Bookings)
+              1. คิวจอง (Bookings)
             </span>
             <div className="flex items-baseline justify-between">
               <span className="text-base font-semibold text-gray-900">
@@ -390,12 +390,12 @@ export default function AdminGoogleSheetTab({
                 ชีต: {gasStatus?.sheetCounts ? gasStatus.sheetCounts.bookings : "-"}
               </span>
             </div>
-            <span className="text-[10px] text-emerald-600 block mt-0.5">5 แท็บอัปเดตอัตโนมัติ</span>
+            <span className="text-[10px] text-emerald-600 block mt-0.5">18 คอลัมน์ + สลิป</span>
           </div>
 
           <div className="p-3 bg-gray-50/80 rounded-xl border border-gray-100">
             <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">
-              บริการ (Services)
+              2. บริการ (Services)
             </span>
             <div className="flex items-baseline justify-between">
               <span className="text-base font-semibold text-gray-900">
@@ -405,12 +405,12 @@ export default function AdminGoogleSheetTab({
                 ชีต: {gasStatus?.sheetCounts ? gasStatus.sheetCounts.services : "-"}
               </span>
             </div>
-            <span className="text-[10px] text-emerald-600 block mt-0.5">ซิงค์ชื่อ/ราคา/เวลา</span>
+            <span className="text-[10px] text-emerald-600 block mt-0.5">ชื่อ/ราคา/เวลา/หมวด</span>
           </div>
 
           <div className="p-3 bg-gray-50/80 rounded-xl border border-gray-100">
             <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">
-              พนักงาน (Staff)
+              3. พนักงาน (Staff)
             </span>
             <div className="flex items-baseline justify-between">
               <span className="text-base font-semibold text-gray-900">
@@ -420,12 +420,12 @@ export default function AdminGoogleSheetTab({
                 ชีต: {gasStatus?.sheetCounts ? gasStatus.sheetCounts.staff : "-"}
               </span>
             </div>
-            <span className="text-[10px] text-emerald-600 block mt-0.5">ซิงค์ชื่อ/ความเชี่ยวชาญ</span>
+            <span className="text-[10px] text-emerald-600 block mt-0.5">ชื่อ/ความเชี่ยวชาญ/ดาว</span>
           </div>
 
           <div className="p-3 bg-gray-50/80 rounded-xl border border-gray-100">
             <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">
-              ลูกค้า (Customers)
+              4. ลูกค้า (Customers)
             </span>
             <div className="flex items-baseline justify-between">
               <span className="text-base font-semibold text-gray-900">
@@ -435,7 +435,22 @@ export default function AdminGoogleSheetTab({
                 ชีต: {gasStatus?.sheetCounts ? gasStatus.sheetCounts.customers : "-"}
               </span>
             </div>
-            <span className="text-[10px] text-emerald-600 block mt-0.5">สะสมยอดอัตโนมัติ</span>
+            <span className="text-[10px] text-emerald-600 block mt-0.5">CRM & ยอดสะสม</span>
+          </div>
+
+          <div className="p-3 bg-gray-50/80 rounded-xl border border-gray-100 col-span-2 sm:col-span-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">
+              5. ตั้งค่า (Settings)
+            </span>
+            <div className="flex items-baseline justify-between">
+              <span className="text-base font-semibold text-gray-900">
+                {Object.keys(settings || {}).length || 7}
+              </span>
+              <span className="text-[10px] text-gray-500">
+                ชีต: {gasStatus?.sheetCounts ? gasStatus.sheetCounts.settings : "-"}
+              </span>
+            </div>
+            <span className="text-[10px] text-emerald-600 block mt-0.5">URL / อีเมล / พร้อมเพย์</span>
           </div>
         </div>
 

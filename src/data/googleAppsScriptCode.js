@@ -282,6 +282,10 @@ function doPost(e) {
       result = syncServicesData(body.services);
     } else if (action === "syncStaff") {
       result = syncStaffData(body.staff);
+    } else if (action === "syncCustomers") {
+      result = syncCustomersData(body.customers);
+    } else if (action === "syncSettings") {
+      result = syncSettingsData(body.settings);
     } else {
       result = { success: false, message: "Action not supported: " + action };
     }
@@ -412,52 +416,12 @@ function pushAllData(dbData) {
 
   // 4. ซิงค์แท็บ Customers
   if (Array.isArray(dbData.customers)) {
-    let sheet = ss.getSheetByName("Customers");
-    if (!sheet) {
-      sheet = ss.insertSheet("Customers");
-    }
-    sheet.clear();
-    const headers = ["Customer Phone", "Customer Name", "Customer Email", "Total Bookings", "Total Spent (THB)", "Last Visit Date", "LINE User ID"];
-    sheet.appendRow(headers);
-    sheet.getRange("A:A").setNumberFormat("@");
-
-    dbData.customers.forEach(c => {
-      sheet.appendRow([
-        String(c.customerPhone || c["Customer Phone"] || ""),
-        String(c.customerName || c["Customer Name"] || ""),
-        String(c.customerEmail || c["Customer Email"] || ""),
-        Number(c.totalBookings || c["Total Bookings"]) || 1,
-        Number(c.totalSpent || c["Total Spent (THB)"]) || 0,
-        String(c.lastVisitDate || c["Last Visit Date"] || ""),
-        String(c.lineUserId || c["LINE User ID"] || "")
-      ]);
-    });
-    formatHeaderRow(sheet, headers.length, "#FDEBD0", "#7E3B00");
+    syncCustomersData(dbData.customers);
   }
 
   // 5. ซิงค์แท็บ Settings
   if (dbData.settings && typeof dbData.settings === "object") {
-    let sheet = ss.getSheetByName("Settings");
-    if (!sheet) {
-      sheet = ss.insertSheet("Settings");
-    }
-    sheet.clear();
-    const headers = ["Key", "Value", "Description"];
-    sheet.appendRow(headers);
-    sheet.getRange("B:B").setNumberFormat("@");
-
-    const st = dbData.settings;
-    const settingsRows = [
-      ["OwnerEmail", String(st.ownerEmail || Session.getActiveUser().getEmail() || ""), "อีเมลเจ้าของร้านสำหรับรับการแจ้งเตือนคิวจอง"],
-      ["PromptPayNumber", String(st.promptPayNumber || "0812345678"), "เบอร์พร้อมเพย์รับชำระเงินของ The Bloom Studio"],
-      ["ShopName", String(st.shopName || "The Bloom Studio"), "ชื่อแบรนด์ร้านความงามและสปา"],
-      ["ServerWebhookUrl", String(st.serverWebhookUrl || ""), "URL เซิร์ฟเวอร์ของระบบจอง"],
-      ["GoogleDriveFolderUrl", String(st.googleDriveFolderUrl || ""), "ลิงก์โฟลเดอร์ Google Drive เก็บสลิปและไฟล์แนบ"],
-      ["GoogleDriveFolderId", String(st.googleDriveFolderId || ""), "Folder ID ของ Google Drive"],
-      ["GoogleCalendarId", String(st.googleCalendarId || "primary"), "ID ของ Google Calendar ที่ใช้ลงบันทึกนัดหมาย"]
-    ];
-    settingsRows.forEach(row => sheet.appendRow(row));
-    formatHeaderRow(sheet, headers.length, "#F4EAE0", "#3E2723");
+    syncSettingsData(dbData.settings);
   }
 
   return {
@@ -526,6 +490,65 @@ function syncStaffData(staffList) {
   });
   formatHeaderRow(sheet, headers.length, "#F4EAE0", "#3E2723");
   return { success: true, count: staffList.length };
+}
+
+/**
+ * อัปเดตแท็บ Customers (CRM)
+ */
+function syncCustomersData(customers) {
+  if (!Array.isArray(customers)) return { success: false, message: "Invalid customers array" };
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("Customers");
+  if (!sheet) {
+    sheet = ss.insertSheet("Customers");
+  }
+  sheet.clear();
+  const headers = ["Customer Phone", "Customer Name", "Customer Email", "Total Bookings", "Total Spent (THB)", "Last Visit Date", "LINE User ID"];
+  sheet.appendRow(headers);
+  sheet.getRange("A:A").setNumberFormat("@");
+
+  customers.forEach(c => {
+    sheet.appendRow([
+      String(c.customerPhone || c["Customer Phone"] || ""),
+      String(c.customerName || c["Customer Name"] || ""),
+      String(c.customerEmail || c["Customer Email"] || ""),
+      Number(c.totalBookings || c["Total Bookings"]) || 1,
+      Number(c.totalSpent || c["Total Spent (THB)"]) || 0,
+      String(c.lastVisitDate || c["Last Visit Date"] || ""),
+      String(c.lineUserId || c["LINE User ID"] || "")
+    ]);
+  });
+  formatHeaderRow(sheet, headers.length, "#FDEBD0", "#7E3B00");
+  return { success: true, count: customers.length };
+}
+
+/**
+ * อัปเดตแท็บ Settings
+ */
+function syncSettingsData(settings) {
+  if (!settings || typeof settings !== "object") return { success: false, message: "Invalid settings object" };
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName("Settings");
+  if (!sheet) {
+    sheet = ss.insertSheet("Settings");
+  }
+  sheet.clear();
+  const headers = ["Key", "Value", "Description"];
+  sheet.appendRow(headers);
+  sheet.getRange("B:B").setNumberFormat("@");
+
+  const settingsRows = [
+    ["OwnerEmail", String(settings.ownerEmail || Session.getActiveUser().getEmail() || ""), "อีเมลเจ้าของร้านสำหรับรับการแจ้งเตือนคิวจอง"],
+    ["PromptPayNumber", String(settings.promptPayNumber || "0812345678"), "เบอร์พร้อมเพย์รับชำระเงินของ The Bloom Studio"],
+    ["ShopName", String(settings.shopName || "The Bloom Studio"), "ชื่อแบรนด์ร้านความงามและสปา"],
+    ["ServerWebhookUrl", String(settings.serverWebhookUrl || ""), "URL เซิร์ฟเวอร์ของระบบจอง"],
+    ["GoogleDriveFolderUrl", String(settings.googleDriveFolderUrl || ""), "ลิงก์โฟลเดอร์ Google Drive เก็บสลิปและไฟล์แนบ"],
+    ["GoogleDriveFolderId", String(settings.googleDriveFolderId || ""), "Folder ID ของ Google Drive"],
+    ["GoogleCalendarId", String(settings.googleCalendarId || "primary"), "ID ของ Google Calendar ที่ใช้ลงบันทึกนัดหมาย"]
+  ];
+  settingsRows.forEach(row => sheet.appendRow(row));
+  formatHeaderRow(sheet, headers.length, "#F4EAE0", "#3E2723");
+  return { success: true, count: settingsRows.length };
 }
 
 /**

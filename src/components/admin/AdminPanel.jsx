@@ -3,6 +3,7 @@ import AdminNavbar from "./AdminNavbar";
 import AdminBookingsTab from "./AdminBookingsTab";
 import AdminServicesTab from "./AdminServicesTab";
 import AdminStaffTab from "./AdminStaffTab";
+import AdminCustomersTab from "./AdminCustomersTab";
 import AdminGoogleSheetTab from "./AdminGoogleSheetTab";
 import { adminService } from "../../api/adminService";
 
@@ -269,7 +270,8 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
   const counts = {
     bookings: Array.isArray(dbData.bookings) ? dbData.bookings.length : 0,
     services: Array.isArray(dbData.services) ? dbData.services.length : 0,
-    staff: Array.isArray(dbData.staff) ? dbData.staff.length : 0
+    staff: Array.isArray(dbData.staff) ? dbData.staff.length : 0,
+    customers: Array.isArray(dbData.customers) ? dbData.customers.length : 0
   };
 
   return (
@@ -322,6 +324,14 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
                 onCreateStaff={handleCreateStaff}
                 onUpdateStaff={handleUpdateStaff}
                 onDeleteStaff={handleDeleteStaff}
+              />
+            </div>
+
+            <div className={activeTab === "customers" ? "block" : "hidden"}>
+              <AdminCustomersTab
+                customers={dbData.customers || []}
+                bookings={dbData.bookings || []}
+                onRefresh={() => fetchDatabase(false)}
               />
             </div>
 
