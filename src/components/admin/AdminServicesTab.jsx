@@ -117,9 +117,9 @@ export default function AdminServicesTab({
 
       {/* Services Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {services.map((srv) => (
+        {services.map((srv, sIdx) => (
           <div
-            key={srv.id}
+            key={`${srv.id || "srv"}-${sIdx}`}
             className="bg-white rounded-2xl border border-gray-100 p-5 shadow-xs flex flex-col justify-between hover:border-[#D4A373]/40 transition-colors"
           >
             <div>

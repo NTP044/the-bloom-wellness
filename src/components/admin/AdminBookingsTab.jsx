@@ -298,8 +298,8 @@ export default function AdminBookingsTab({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 text-xs">
-                {filteredBookings.map((b) => (
-                  <tr key={b.id} className="hover:bg-gray-50/50 transition-colors">
+                {filteredBookings.map((b, bIdx) => (
+                  <tr key={`${b.id || "bk"}-${bIdx}`} className="hover:bg-gray-50/50 transition-colors">
                     <td className="py-3.5 px-4 font-mono">
                       <div className="font-semibold text-gray-900">{b.id}</div>
                       <div className="text-[10px] text-gray-400">
@@ -444,8 +444,8 @@ export default function AdminBookingsTab({
 
           {/* Mobile Cards View */}
           <div className="lg:hidden divide-y divide-gray-100">
-            {filteredBookings.map((b) => (
-              <div key={b.id} className="p-4 space-y-3">
+            {filteredBookings.map((b, bIdx) => (
+              <div key={`${b.id || "bk"}-${bIdx}`} className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-xs font-bold text-gray-800">{b.id}</span>
                   {getStatusBadge(b.status)}
@@ -602,8 +602,8 @@ export default function AdminBookingsTab({
                   className="w-full text-xs p-2.5 rounded-lg border border-gray-200 bg-white focus:border-[#D4A373] outline-none"
                 >
                   <option value="">-- กรุณาเลือกบริการ --</option>
-                  {services.map((s) => (
-                    <option key={s.id} value={s.id}>
+                  {services.map((s, sIdx) => (
+                    <option key={`${s.id}-${sIdx}`} value={s.id}>
                       {s.name} ({s.duration} นาที - ฿{s.price.toLocaleString()})
                     </option>
                   ))}
@@ -622,8 +622,8 @@ export default function AdminBookingsTab({
                   className="w-full text-xs p-2.5 rounded-lg border border-gray-200 bg-white focus:border-[#D4A373] outline-none"
                 >
                   <option value="">-- กรุณาเลือกช่าง --</option>
-                  {availableStaffForModal.map((st) => (
-                    <option key={st.id} value={st.id}>
+                  {availableStaffForModal.map((st, stIdx) => (
+                    <option key={`${st.id}-${stIdx}`} value={st.id}>
                       {st.name} ({st.nickname || st.role})
                     </option>
                   ))}

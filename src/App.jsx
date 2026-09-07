@@ -181,7 +181,11 @@ export default function App() {
   const [isAdminView, setIsAdminView] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(() => {
-    return typeof window !== "undefined" && sessionStorage.getItem("thebloom_admin_auth") === "true";
+    return (
+      typeof window !== "undefined" &&
+      (sessionStorage.getItem("thebloom_admin_auth") === "true" ||
+        localStorage.getItem("thebloom_admin_auth") === "true")
+    );
   });
 
   // Smart User Memory Helpers
@@ -215,6 +219,22 @@ export default function App() {
       console.warn("loadRememberedUser error:", err);
     }
   };
+
+  // Guest / Browser Memory for Web Users without LINE
+  useEffect(() => {
+    if (!isLineLoggedIn && typeof window !== "undefined") {
+      try {
+        const rawGuest = localStorage.getItem("thebloom_guest_customer");
+        if (rawGuest) {
+          const guest = JSON.parse(rawGuest);
+          if (guest.name && !customerName) setCustomerName(guest.name);
+          if (guest.phone && !customerPhone) setCustomerPhone(guest.phone);
+          if (guest.email && !customerEmail) setCustomerEmail(guest.email);
+          if (guest.phone) setIsAutoFilled(true);
+        }
+      } catch (e) {}
+    }
+  }, [isLineLoggedIn]);
 
   const saveUserMemory = (userId, name, phone, email) => {
     if (!userId) return;
@@ -440,9 +460,8 @@ export default function App() {
     [calendarDates, selectedDate]
   );
 
-  // Form Validity: MUST be logged in with LINE to book
+  // Form Validity: Name & Phone required; LINE login recommended for customers, unblocked for Admin and direct web users
   const isFormComplete =
-    isLineLoggedIn &&
     Boolean(selectedServiceId) &&
     Boolean(selectedStaffId) &&
     Boolean(selectedDate) &&
@@ -453,10 +472,6 @@ export default function App() {
   // Handle Form Submit
   const handleBookingSubmit = async (e) => {
     e.preventDefault();
-    if (!isLineLoggedIn || !lineProfile?.userId) {
-      setBookingErrorMessage("ระบบความปลอดภัย: กรุณาเข้าสู่ระบบด้วย LINE ก่อนกดยืนยันการจอง");
-      return;
-    }
     if (!isFormComplete || isSubmitting) return;
 
     setIsSubmitting(true);
@@ -470,17 +485,31 @@ export default function App() {
         time: selectedTime,
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
-        customerEmail: customerEmail.trim(),
-        specialRequest: specialRequest.trim(),
-        lineUserId: lineProfile.userId,
-        lineDisplayName: lineProfile.displayName || customerName.trim(),
+        customerEmail: customerEmail.trim() || undefined,
+        specialRequest: specialRequest.trim() || undefined,
+        lineUserId: lineProfile?.userId || (isAdminAuthenticated ? "ADMIN_BOOKING" : undefined),
+        lineDisplayName: lineProfile?.displayName || (isAdminAuthenticated ? "ผู้ดูแลระบบ (Admin)" : customerName.trim()),
+        linePictureUrl: lineProfile?.pictureUrl || undefined
       };
 
       const response = await createBooking(payload);
       if (response && response.success) {
         setBookingSuccessData(response.booking);
-        // Save to smart user memory so next time they don't have to type again!
-        saveUserMemory(lineProfile.userId, customerName, customerPhone, customerEmail);
+        // Save to smart user memory
+        if (lineProfile?.userId) {
+          saveUserMemory(lineProfile.userId, customerName, customerPhone, customerEmail);
+        } else {
+          try {
+            localStorage.setItem(
+              "thebloom_guest_customer",
+              JSON.stringify({
+                name: customerName.trim(),
+                phone: customerPhone.trim(),
+                email: customerEmail.trim()
+              })
+            );
+          } catch (e) {}
+        }
         setIsAutoFilled(true);
 
         // Refresh availability
@@ -543,6 +572,7 @@ export default function App() {
         onLogout={() => {
           setIsAdminAuthenticated(false);
           sessionStorage.removeItem("thebloom_admin_auth");
+          localStorage.removeItem("thebloom_admin_auth");
           setIsAdminView(false);
         }}
       />
@@ -804,11 +834,11 @@ export default function App() {
               {/* Dynamic Category Filter Tabs */}
               {categories.length > 1 && (
                 <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar -mx-1 px-1">
-                  {categories.map((cat) => {
+                  {categories.map((cat, cIdx) => {
                     const isCatSelected = selectedCategory === cat;
                     return (
                       <button
-                        key={cat}
+                        key={`cat-${cat}-${cIdx}`}
                         type="button"
                         onClick={() => setSelectedCategory(cat)}
                         className={`px-3 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition cursor-pointer shrink-0 ${
@@ -840,11 +870,11 @@ export default function App() {
                   ไม่พบบริการในหมวดหมู่นี้
                 </div>
               ) : (
-                filteredServices.map((service) => {
+                filteredServices.map((service, sIdx) => {
                   const isSelected = selectedServiceId === service.id;
                   return (
                     <div
-                      key={service.id}
+                      key={`srv-${service.id}-${sIdx}`}
                       onClick={() => setSelectedServiceId(service.id)}
                       className={`group p-4 sm:p-4.5 rounded-lg transition-all cursor-pointer ${
                         isSelected
@@ -919,11 +949,11 @@ export default function App() {
                   ไม่มีช่างที่รองรับบริการนี้
                 </div>
               ) : (
-                eligibleStaff.map((staff) => {
+                eligibleStaff.map((staff, stIdx) => {
                   const isSelected = selectedStaffId === staff.id;
                   return (
                     <div
-                      key={staff.id}
+                      key={`staff-${staff.id}-${stIdx}`}
                       onClick={() => setSelectedStaffId(staff.id)}
                       className={`flex-shrink-0 w-28 text-center cursor-pointer transition-all ${
                         isSelected ? "opacity-100 scale-102" : "opacity-40 hover:opacity-90"
@@ -985,11 +1015,11 @@ export default function App() {
 
             {/* Date Picker Cards */}
             <div className="flex gap-2 mb-5 overflow-x-auto pb-2 no-scrollbar -mx-2 px-2">
-              {calendarDates.map((item) => {
+              {calendarDates.map((item, dIdx) => {
                 const isSelected = selectedDate === item.dateStr;
                 return (
                   <div
-                    key={item.dateStr}
+                    key={`date-${item.dateStr}-${dIdx}`}
                     onClick={() => setSelectedDate(item.dateStr)}
                     className={`flex-1 min-w-[62px] rounded-md p-2.5 text-center bg-white cursor-pointer transition-all ${
                       isSelected
@@ -1032,14 +1062,14 @@ export default function App() {
                 "17:00",
                 "18:00",
                 "19:00",
-              ].map((timeSlot) => {
+              ].map((timeSlot, tIdx) => {
                 const isBooked = bookedSlots.includes(timeSlot);
                 const isSelected = selectedTime === timeSlot;
 
                 if (isBooked) {
                   return (
                     <button
-                      key={timeSlot}
+                      key={`booked-${timeSlot}-${tIdx}`}
                       type="button"
                       disabled
                       className="py-2.5 px-1 text-xs border border-gray-100 bg-white rounded-md opacity-35 cursor-not-allowed line-through text-gray-400"
@@ -1051,7 +1081,7 @@ export default function App() {
 
                 return (
                   <button
-                    key={timeSlot}
+                    key={`avail-${timeSlot}-${tIdx}`}
                     type="button"
                     onClick={() => setSelectedTime(timeSlot)}
                     className={`py-2.5 px-1 text-xs rounded-md transition-colors cursor-pointer ${
@@ -1194,20 +1224,20 @@ export default function App() {
               </div>
 
               {/* Confirm Button / Login Gate */}
-              <div className="pt-2 space-y-2">
+              <div className="pt-2 space-y-2.5">
                 {!isLineLoggedIn ? (
-                  <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 text-center space-y-2">
-                    <p className="text-xs font-semibold text-amber-900">
-                      🔒 กรุณาเข้าสู่ระบบ LINE ก่อนยืนยันการจอง
-                    </p>
-                    <p className="text-[11px] text-amber-700 leading-tight">
-                      ระบบจำเป็นต้องยืนยันตัวตนเพื่อรักษาความปลอดภัยและให้คุณตรวจสอบคิวของตนเองได้
-                    </p>
-                    <div className="flex items-center justify-center gap-2 pt-1">
+                  <div className="p-3 rounded-lg bg-emerald-50/70 border border-emerald-200/80 text-center space-y-2">
+                    <div className="flex items-center justify-between text-[11px] text-emerald-800">
+                      <span className="font-medium flex items-center gap-1.5 text-left">
+                        <LineBubbleIcon className="w-3.5 h-3.5 fill-[#06C755] shrink-0" />
+                        <span>เข้าสู่ระบบด้วย LINE เพื่อรับการแจ้งเตือนคิวจองอัตโนมัติ</span>
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-center gap-2">
                       <button
                         type="button"
                         onClick={handleLineLogin}
-                        className="px-4 py-2 rounded-md bg-[#06C755] hover:bg-[#05B34C] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer transition"
+                        className="px-3.5 py-1.5 rounded-md bg-[#06C755] hover:bg-[#05B34C] text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs cursor-pointer transition"
                       >
                         <LineBubbleIcon className="w-3.5 h-3.5 fill-white" />
                         <span>Login with LINE</span>
@@ -1215,35 +1245,56 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => handleSimulateDevLogin()}
-                        className="px-3 py-2 rounded-md bg-white border border-gray-300 text-gray-700 font-medium text-xs hover:bg-gray-50 cursor-pointer transition"
+                        className="px-2.5 py-1.5 rounded-md bg-white border border-gray-200 text-gray-700 font-medium text-xs hover:bg-gray-50 cursor-pointer transition"
                       >
                         <span>⚡ จำลอง Login</span>
                       </button>
                     </div>
                   </div>
                 ) : (
-                  <button
-                    type="submit"
-                    disabled={!isFormComplete || isSubmitting}
-                    className={`w-full h-13 font-bold uppercase tracking-[0.2em] rounded-md shadow-lg transition-all flex items-center justify-center gap-3 text-xs sm:text-sm ${
-                      isFormComplete && !isSubmitting
-                        ? "bg-[#D4A373] text-white shadow-[#D4A373]/20 hover:bg-[#c19262] cursor-pointer active:scale-99"
-                        : "bg-gray-200 text-gray-400 shadow-none cursor-not-allowed"
-                    }`}
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin text-white" />
-                        <span>CONFIRMING...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>CONFIRM BOOKING</span>
-                        <ChevronRight className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
+                  <div className="p-2.5 rounded-lg bg-emerald-50/60 border border-emerald-200/70 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <div className="w-5 h-5 rounded-full bg-[#06C755] flex items-center justify-center text-white shrink-0">
+                        <LineBubbleIcon className="w-3 h-3 fill-white" />
+                      </div>
+                      <span className="text-emerald-950 font-medium truncate max-w-[180px]">
+                        {lineProfile?.displayName || "LINE User"}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-emerald-700 font-medium bg-white px-2 py-0.5 rounded-full border border-emerald-200 shrink-0">
+                      LINE Verified
+                    </span>
+                  </div>
                 )}
+
+                {isAdminAuthenticated && (
+                  <div className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-md text-[11px] text-amber-900 flex items-center justify-between">
+                    <span className="font-semibold">🔑 โหมดผู้ดูแลระบบ (Admin Mode)</span>
+                    <span className="text-[10px] text-amber-700">ลงคิวให้ลูกค้าได้ทันที</span>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={!isFormComplete || isSubmitting}
+                  className={`w-full h-13 font-bold uppercase tracking-[0.2em] rounded-md shadow-lg transition-all flex items-center justify-center gap-3 text-xs sm:text-sm ${
+                    isFormComplete && !isSubmitting
+                      ? "bg-[#D4A373] text-white shadow-[#D4A373]/20 hover:bg-[#c19262] cursor-pointer active:scale-99"
+                      : "bg-gray-200 text-gray-400 shadow-none cursor-not-allowed"
+                  }`}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                      <span>CONFIRMING...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>CONFIRM BOOKING</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
 
                 <p className="text-center text-[10px] text-gray-400 mt-2 tracking-tight">
                   By booking, you agree to our 24h cancellation policy.
@@ -1420,9 +1471,9 @@ export default function App() {
                   <p className="text-[11px] text-gray-400">เมื่อคุณทำการจอง คิวจะแสดงที่นี่ทันที</p>
                 </div>
               ) : (
-                allBookings.map((b) => (
+                allBookings.map((b, bIdx) => (
                   <div
-                    key={b.id}
+                    key={`hist-${b.id || "bk"}-${bIdx}`}
                     className="p-3.5 rounded-lg border border-gray-100 bg-gray-50 text-xs space-y-1.5 shadow-2xs"
                   >
                     <div className="flex items-center justify-between">
@@ -1477,6 +1528,7 @@ export default function App() {
         onLoginSuccess={() => {
           setIsAdminAuthenticated(true);
           sessionStorage.setItem("thebloom_admin_auth", "true");
+          localStorage.setItem("thebloom_admin_auth", "true");
           setIsAdminModalOpen(false);
           setIsAdminView(true);
         }}

@@ -1,4 +1,5 @@
 import express from "express";
+import http from "http";
 import path from "path";
 import fs from "fs";
 import cors from "cors";
@@ -234,9 +235,90 @@ function loadDatabase() {
     } else {
       saveDatabase();
     }
+    sanitizeDatabase(db);
   } catch (err) {
     console.error("[Database] Error loading database.json:", err);
   }
+}
+
+// Data Sanitization & Deduplication Helper
+function sanitizeDatabase(targetDb) {
+  if (!targetDb) return targetDb;
+
+  // 1. Deduplicate Bookings
+  if (Array.isArray(targetDb.bookings)) {
+    const seenBookingIds = new Set();
+    const cleanBookings = [];
+    targetDb.bookings.forEach((b, idx) => {
+      let bId = b.id || b.ID;
+      if (!bId || seenBookingIds.has(bId)) {
+        bId = `BK-${Date.now().toString(36).toUpperCase()}-${idx}`;
+      }
+      seenBookingIds.add(bId);
+      cleanBookings.push({ ...b, id: bId });
+    });
+    targetDb.bookings = cleanBookings;
+  }
+
+  // 2. Deduplicate Staff
+  if (Array.isArray(targetDb.staff)) {
+    const seenStaffIds = new Set();
+    const cleanStaff = [];
+    targetDb.staff.forEach((st, idx) => {
+      let sId = st.id || st.ID;
+      if (!sId || seenStaffIds.has(sId)) {
+        const slug = (st.nickname || st.Nickname || st.name || "staff")
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "");
+        sId = `stf-${slug || idx}`;
+        if (seenStaffIds.has(sId)) {
+          sId = `${sId}-${idx}`;
+        }
+      }
+      seenStaffIds.add(sId);
+      cleanStaff.push({ ...st, id: sId });
+    });
+    targetDb.staff = cleanStaff;
+  }
+
+  // 3. Deduplicate Services
+  if (Array.isArray(targetDb.services)) {
+    const seenSrvIds = new Set();
+    const cleanServices = [];
+    targetDb.services.forEach((s, idx) => {
+      let sId = s.id || s.ID;
+      if (!sId || seenSrvIds.has(sId)) {
+        sId = `srv-${Date.now().toString(36)}-${idx}`;
+      }
+      seenSrvIds.add(sId);
+      cleanServices.push({ ...s, id: sId });
+    });
+    targetDb.services = cleanServices;
+  }
+
+  // 4. Clean Customers
+  if (Array.isArray(targetDb.customers)) {
+    const seenPhones = new Set();
+    const cleanCustomers = [];
+    targetDb.customers.forEach((c) => {
+      const phone = formatGasPhone(c.customerPhone || c["Customer Phone"]);
+      if (phone && !seenPhones.has(phone)) {
+        seenPhones.add(phone);
+        cleanCustomers.push({
+          customerPhone: phone,
+          customerName: c.customerName || c["Customer Name"] || "",
+          customerEmail: c.customerEmail || c["Customer Email"] || "",
+          totalBookings: parseInt(c.totalBookings || c["Total Bookings"], 10) || 1,
+          totalSpent: parseFloat(c.totalSpent || c["Total Spent (THB)"]) || 0,
+          lastVisitDate: formatGasDate(c.lastVisitDate || c["Last Visit Date"]),
+          lineUserId: c.lineUserId || c["LINE User ID"] || ""
+        });
+      }
+    });
+    targetDb.customers = cleanCustomers;
+  }
+
+  return targetDb;
 }
 
 function saveDatabase() {
@@ -245,13 +327,14 @@ function saveDatabase() {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
+    sanitizeDatabase(db);
     fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
   } catch (err) {
     console.error("[Database] Error saving database.json:", err);
   }
 }
 
-// Initial DB load
+// Initial DB load & sanitization
 loadDatabase();
 
 // Standard daily time slots
@@ -278,7 +361,6 @@ function formatGasTime(val) {
     if (val.includes("T")) {
       const d = new Date(val);
       if (!isNaN(d.getTime())) {
-        // Adjust for UTC+7 (Bangkok)
         const hours = String((d.getUTCHours() + 7) % 24).padStart(2, "0");
         const minutes = String(d.getUTCMinutes()).padStart(2, "0");
         return `${hours}:${minutes}`;
@@ -300,14 +382,22 @@ function formatGasPhone(val) {
   return str;
 }
 
-// Helper: sync booking to Google Apps Script Web App asynchronously
+// Status tracking for real-time GAS sync
+let lastGasSync = {
+  timestamp: null,
+  success: false,
+  message: "ระบบเชื่อมต่อ Google Sheet อัตโนมัติพร้อมทำงาน",
+  action: null
+};
+
+// Helper: sync booking to Google Apps Script Web App asynchronously & update Calendar
 async function syncBookingToGas(booking) {
   if (!db.settings.gasWebAppUrl) return;
   try {
     const url = db.settings.gasWebAppUrl.trim();
     if (!url.startsWith("http")) return;
 
-    fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -315,31 +405,31 @@ async function syncBookingToGas(booking) {
         booking
       }),
       redirect: "follow"
-    }).then(async (res) => {
-      const text = await res.text();
-      try {
-        const json = JSON.parse(text);
-        if (json.success) {
-          console.log(`[GAS Sync] Auto-synced booking ${booking.id} to Google Apps Script`);
-        }
-      } catch (e) {
-        // Ignored non-JSON response
-      }
-    }).catch((err) => {
-      console.warn(`[GAS Sync] Warning syncing booking to GAS:`, err.message);
     });
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      if (json.success) {
+        lastGasSync = {
+          timestamp: new Date().toISOString(),
+          success: true,
+          message: `เพิ่มการจอง ${booking.id} ลง Google Sheet และ Calendar สำเร็จ`,
+          action: "addBooking"
+        };
+        console.log(`[GAS Sync] Auto-synced booking ${booking.id} to Google Apps Script`);
+        if (json.calendarEventId) {
+          const b = db.bookings.find(x => x.id === booking.id);
+          if (b) {
+            b.calendarEventId = json.calendarEventId;
+            saveDatabase();
+          }
+        }
+      }
+    } catch (e) {}
   } catch (err) {
     console.warn(`[GAS Sync] Warning syncing booking to GAS:`, err.message);
   }
 }
-
-// Status tracking for real-time GAS sync
-let lastGasSync = {
-  timestamp: null,
-  success: false,
-  message: "ยังไม่มีการซิงค์",
-  action: null
-};
 
 // Helper: sync status change to Google Apps Script Web App
 async function syncStatusToGas(bookingId, status, updates = {}) {
@@ -348,7 +438,7 @@ async function syncStatusToGas(bookingId, status, updates = {}) {
     const url = db.settings.gasWebAppUrl.trim();
     if (!url.startsWith("http")) return;
 
-    fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -358,18 +448,20 @@ async function syncStatusToGas(bookingId, status, updates = {}) {
         updates
       }),
       redirect: "follow"
-    }).then(async (res) => {
-      const text = await res.text();
-      try {
-        const json = JSON.parse(text);
-        if (json.success) {
-          lastGasSync = { timestamp: new Date().toISOString(), success: true, message: `อัปเดตสถานะ ${bookingId} เป็น ${status} สำเร็จ`, action: "updateBookingStatus" };
-          console.log(`[GAS Sync] Updated status for ${bookingId} to ${status}`);
-        }
-      } catch (e) {}
-    }).catch((err) => {
-      console.warn(`[GAS Sync] Warning updating status in GAS:`, err.message);
     });
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      if (json.success) {
+        lastGasSync = {
+          timestamp: new Date().toISOString(),
+          success: true,
+          message: `อัปเดตสถานะ ${bookingId} เป็น ${status} ใน Google Sheet สำเร็จ`,
+          action: "updateBookingStatus"
+        };
+        console.log(`[GAS Sync] Updated status for ${bookingId} to ${status}`);
+      }
+    } catch (e) {}
   } catch (err) {
     console.warn(`[GAS Sync] Warning updating status in GAS:`, err.message);
   }
@@ -382,7 +474,7 @@ async function syncDeleteToGas(bookingId) {
     const url = db.settings.gasWebAppUrl.trim();
     if (!url.startsWith("http")) return;
 
-    fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -390,31 +482,33 @@ async function syncDeleteToGas(bookingId) {
         bookingId
       }),
       redirect: "follow"
-    }).then(async (res) => {
-      const text = await res.text();
-      try {
-        const json = JSON.parse(text);
-        if (json.success) {
-          lastGasSync = { timestamp: new Date().toISOString(), success: true, message: `ลบรายการ ${bookingId} ออกจาก Google Sheet สำเร็จ`, action: "deleteBooking" };
-          console.log(`[GAS Sync] Deleted booking ${bookingId} from Google Apps Script`);
-        }
-      } catch (e) {}
-    }).catch((err) => {
-      console.warn(`[GAS Sync] Warning deleting booking from GAS:`, err.message);
     });
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      if (json.success) {
+        lastGasSync = {
+          timestamp: new Date().toISOString(),
+          success: true,
+          message: `ลบรายการ ${bookingId} ออกจาก Google Sheet และ Calendar สำเร็จ`,
+          action: "deleteBooking"
+        };
+        console.log(`[GAS Sync] Deleted booking ${bookingId} from Google Apps Script`);
+      }
+    } catch (e) {}
   } catch (err) {
     console.warn(`[GAS Sync] Warning deleting booking from GAS:`, err.message);
   }
 }
 
-// Helper: full automatic background synchronization to Google Sheet (5 tabs)
+// Helper: full automatic synchronization to Google Sheet (5 tabs)
 async function autoSyncToGas() {
   if (!db.settings.gasWebAppUrl) return;
   const url = db.settings.gasWebAppUrl.trim();
   if (!url.startsWith("http")) return;
 
   try {
-    fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -422,30 +516,194 @@ async function autoSyncToGas() {
         data: db
       }),
       redirect: "follow"
-    }).then(async (res) => {
-      const text = await res.text();
-      try {
-        const json = JSON.parse(text);
-        if (json.success) {
-          lastGasSync = { timestamp: new Date().toISOString(), success: true, message: "ซิงค์ข้อมูลทั้ง 5 แท็บขึ้น Google Sheet สำเร็จ", action: "pushAll" };
-          console.log("[GAS Auto-Sync] Pushed latest data to Google Sheet successfully");
-        } else {
-          lastGasSync = { timestamp: new Date().toISOString(), success: false, message: json.message || json.error || "GAS returned warning", action: "pushAll" };
-          console.warn("[GAS Auto-Sync] GAS returned notice:", json.message || json.error);
-        }
-      } catch (e) {
-        if (text.includes("<!DOCTYPE") || text.includes("<html")) {
-          lastGasSync = { timestamp: new Date().toISOString(), success: false, message: "GAS ต้องการสิทธิ์: ตั้งค่า Execute as: Me และ Who has access: Anyone", action: "pushAll" };
-          console.warn("[GAS Auto-Sync] Note: GAS returned HTML response. Ensure deployment has 'Execute as: Me' and 'Who has access: Anyone'.");
-        }
-      }
-    }).catch((err) => {
-      lastGasSync = { timestamp: new Date().toISOString(), success: false, message: err.message, action: "pushAll" };
-      console.warn("[GAS Auto-Sync] Background push warning:", err.message);
     });
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      if (json.success) {
+        lastGasSync = {
+          timestamp: new Date().toISOString(),
+          success: true,
+          message: "ซิงค์ข้อมูลทั้ง 5 แท็บขึ้น Google Sheet อัตโนมัติสำเร็จ",
+          action: "pushAll"
+        };
+        console.log("[GAS Auto-Sync] Pushed latest data to Google Sheet successfully");
+      } else {
+        lastGasSync = {
+          timestamp: new Date().toISOString(),
+          success: false,
+          message: json.message || json.error || "GAS returned warning",
+          action: "pushAll"
+        };
+      }
+    } catch (e) {
+      if (text.includes("<!DOCTYPE") || text.includes("<html")) {
+        lastGasSync = {
+          timestamp: new Date().toISOString(),
+          success: false,
+          message: "GAS ต้องการสิทธิ์: ตั้งค่า Execute as: Me และ Who has access: Anyone",
+          action: "pushAll"
+        };
+      }
+    }
   } catch (err) {
     console.warn("[GAS Auto-Sync] Error triggering sync:", err.message);
   }
+}
+
+// Helper: Automatically pull latest data from Google Apps Script to Server Database
+async function pullFromGas(isBackground = false) {
+  if (!db.settings.gasWebAppUrl) return null;
+  const url = db.settings.gasWebAppUrl.trim();
+  if (!url.startsWith("http")) return null;
+
+  try {
+    const pullUrl = url + (url.includes("?") ? "&" : "?") + "action=pullAll";
+    const response = await fetch(pullUrl, {
+      method: "GET",
+      redirect: "follow"
+    });
+    const result = await response.json();
+    if (result && result.data) {
+      // Auto-update sheetUrl if discovered
+      if (result.sheetUrl && !db.settings.googleSheetUrl) {
+        db.settings.googleSheetUrl = result.sheetUrl;
+      }
+      if (result.driveFolderUrl && !db.settings.googleDriveFolderUrl) {
+        db.settings.googleDriveFolderUrl = result.driveFolderUrl;
+      }
+
+      // Format & deduplicate pulled bookings
+      if (Array.isArray(result.data.bookings) && result.data.bookings.length > 0) {
+        const seenBIds = new Set();
+        const pulledBookings = [];
+        result.data.bookings.forEach((b, idx) => {
+          let bId = b.ID || b.id;
+          if (!bId || seenBIds.has(bId)) {
+            bId = `BK-${Date.now().toString(36).toUpperCase()}-${idx}`;
+          }
+          seenBIds.add(bId);
+          pulledBookings.push({
+            id: bId,
+            createdAt: b.CreatedAt || b.createdAt || new Date().toISOString(),
+            status: b.Status || b.status || "pending",
+            date: formatGasDate(b.Date || b.date),
+            time: formatGasTime(b.Time || b.time),
+            serviceId: b.ServiceId || b.serviceId || "",
+            serviceName: b.ServiceName || b.serviceName || "",
+            servicePrice: parseFloat(b.ServicePrice || b.servicePrice) || 0,
+            serviceDuration: parseInt(b.ServiceDuration || b.serviceDuration, 10) || 60,
+            staffId: b.StaffId || b.staffId || "",
+            staffName: b.StaffName || b.staffName || "",
+            customerName: b.CustomerName || b.customerName || "",
+            customerPhone: formatGasPhone(b.CustomerPhone || b.customerPhone),
+            customerEmail: b.CustomerEmail || b.customerEmail || "",
+            specialRequest: b.SpecialRequest || b.specialRequest || "",
+            paymentStatus: b.PaymentStatus || b.paymentStatus || "pending",
+            paymentSlipUrl: b.PaymentSlipUrl || b.paymentSlipUrl || "",
+            calendarEventId: b.CalendarEventId || b.calendarEventId || "",
+            lineUserId: b.LineUserId || b.lineUserId || "",
+            lineDisplayName: b.LineDisplayName || b.lineDisplayName || ""
+          });
+        });
+        db.bookings = pulledBookings;
+      }
+
+      // Format & deduplicate services
+      if (Array.isArray(result.data.services) && result.data.services.length > 0) {
+        const seenSrv = new Set();
+        const pulledServices = [];
+        result.data.services.forEach((s, idx) => {
+          let sId = s.ID || s.id;
+          if (!sId || seenSrv.has(sId)) {
+            sId = `srv-${Date.now().toString(36)}-${idx}`;
+          }
+          seenSrv.add(sId);
+          pulledServices.push({
+            id: sId,
+            name: s.Name || s.name || "",
+            category: s.Category || s.category || "General",
+            price: parseFloat(s.Price || s.price) || 0,
+            duration: parseInt(s.DurationMinutes || s.duration, 10) || 60,
+            description: s.Description || s.description || "",
+            icon: s.Icon || s.icon || "Sparkles"
+          });
+        });
+        db.services = pulledServices;
+      }
+
+      // Format & deduplicate staff
+      if (Array.isArray(result.data.staff) && result.data.staff.length > 0) {
+        const seenStaff = new Set();
+        const pulledStaff = [];
+        result.data.staff.forEach((st, idx) => {
+          let stId = st.ID || st.id;
+          if (!stId || seenStaff.has(stId)) {
+            const nick = (st.Nickname || st.Name || "staff").toLowerCase().replace(/[^a-z0-9]/g, "");
+            stId = `stf-${nick || idx}`;
+            if (seenStaff.has(stId)) {
+              stId = `${stId}-${idx}`;
+            }
+          }
+          seenStaff.add(stId);
+          pulledStaff.push({
+            id: stId,
+            name: st.Name || st.name || "",
+            nickname: st.Nickname || st.nickname || st.Name || "",
+            role: st.Role || st.role || "Therapist",
+            experience: st.Experience || st.experience || "",
+            rating: parseFloat(st.Rating || st.rating) || 5.0,
+            avatar: st.Avatar || st.avatar || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
+            skills: typeof st.Services === "string" ? st.Services.split(",").map(x => x.trim()) : (st.skills || []),
+            bio: st.Bio || st.bio || ""
+          });
+        });
+        db.staff = pulledStaff;
+      }
+
+      // Format customers
+      if (Array.isArray(result.data.customers) && result.data.customers.length > 0) {
+        const seenPhone = new Set();
+        const pulledCustomers = [];
+        result.data.customers.forEach((c) => {
+          const phone = formatGasPhone(c["Customer Phone"] || c.customerPhone);
+          if (phone && !seenPhone.has(phone)) {
+            seenPhone.add(phone);
+            pulledCustomers.push({
+              customerPhone: phone,
+              customerName: c["Customer Name"] || c.customerName || "",
+              customerEmail: c["Customer Email"] || c.customerEmail || "",
+              totalBookings: parseInt(c["Total Bookings"] || c.totalBookings, 10) || 1,
+              totalSpent: parseFloat(c["Total Spent (THB)"] || c.totalSpent) || 0,
+              lastVisitDate: formatGasDate(c["Last Visit Date"] || c.lastVisitDate),
+              lineUserId: c["LINE User ID"] || c.lineUserId || ""
+            });
+          }
+        });
+        db.customers = pulledCustomers;
+      }
+
+      sanitizeDatabase(db);
+      saveDatabase();
+
+      lastGasSync = {
+        timestamp: new Date().toISOString(),
+        success: true,
+        message: "เชื่อมต่อและซิงค์ข้อมูลกับ Google Sheet อัตโนมัติสำเร็จ",
+        action: "pullAll"
+      };
+
+      if (!isBackground) {
+        console.log("[Auto-Sync] Pulled latest data from Google Sheet successfully");
+      }
+      return db;
+    }
+  } catch (err) {
+    if (!isBackground) {
+      console.warn("[Auto-Sync] Warning pulling data from GAS:", err.message);
+    }
+  }
+  return null;
 }
 
 // ==========================================
@@ -1271,81 +1529,11 @@ async function startServer() {
     }
 
     try {
-      const pullUrl = url + (url.includes("?") ? "&" : "?") + "action=pullAll";
-      const response = await fetch(pullUrl, {
-        method: "GET",
-        redirect: "follow"
-      });
-      const result = await response.json();
-
-      if (result && result.data) {
-        if (Array.isArray(result.data.bookings) && result.data.bookings.length > 0) {
-          // Format pulled bookings
-          db.bookings = result.data.bookings.map((b) => ({
-            id: b.ID || b.id || `BK-${Date.now()}`,
-            createdAt: b.CreatedAt || b.createdAt || new Date().toISOString(),
-            status: b.Status || b.status || "pending",
-            date: formatGasDate(b.Date || b.date),
-            time: formatGasTime(b.Time || b.time),
-            serviceName: b.ServiceName || b.serviceName || "",
-            servicePrice: parseFloat(b.ServicePrice || b.servicePrice) || 0,
-            serviceDuration: parseInt(b.ServiceDuration || b.serviceDuration, 10) || 60,
-            staffName: b.StaffName || b.staffName || "",
-            customerName: b.CustomerName || b.customerName || "",
-            customerPhone: formatGasPhone(b.CustomerPhone || b.customerPhone),
-            customerEmail: b.CustomerEmail || b.customerEmail || "",
-            specialRequest: b.SpecialRequest || b.specialRequest || "",
-            paymentStatus: b.PaymentStatus || b.paymentStatus || "pending",
-            paymentSlipUrl: b.PaymentSlipUrl || b.paymentSlipUrl || "",
-            calendarEventId: b.CalendarEventId || b.calendarEventId || "",
-            lineUserId: b.LineUserId || b.lineUserId || "",
-            lineDisplayName: b.LineDisplayName || b.lineDisplayName || ""
-          }));
-        }
-
-        if (Array.isArray(result.data.services) && result.data.services.length > 0) {
-          db.services = result.data.services.map((s) => ({
-            id: s.ID || s.id || `srv-${Date.now()}`,
-            name: s.Name || s.name || "",
-            category: s.Category || s.category || "General",
-            price: parseFloat(s.Price || s.price) || 0,
-            duration: parseInt(s.DurationMinutes || s.duration, 10) || 60,
-            description: s.Description || s.description || "",
-            icon: s.Icon || s.icon || "Sparkles"
-          }));
-        }
-
-        if (Array.isArray(result.data.staff) && result.data.staff.length > 0) {
-          db.staff = result.data.staff.map((st) => ({
-            id: st.ID || st.id || `stf-${Date.now()}`,
-            name: st.Name || st.name || "",
-            nickname: st.Nickname || st.nickname || st.Name || "",
-            role: st.Role || st.role || "Therapist",
-            experience: st.Experience || st.experience || "",
-            rating: parseFloat(st.Rating || st.rating) || 5.0,
-            avatar: st.Avatar || st.avatar || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
-            skills: typeof st.Services === "string" ? st.Services.split(",").map(x => x.trim()) : (st.skills || []),
-            bio: st.Bio || st.bio || ""
-          }));
-        }
-
-        if (Array.isArray(result.data.customers) && result.data.customers.length > 0) {
-          db.customers = result.data.customers.map((c) => ({
-            customerPhone: formatGasPhone(c["Customer Phone"] || c.customerPhone),
-            customerName: c["Customer Name"] || c.customerName || "",
-            customerEmail: c["Customer Email"] || c.customerEmail || "",
-            totalBookings: parseInt(c["Total Bookings"] || c.totalBookings, 10) || 1,
-            totalSpent: parseFloat(c["Total Spent (THB)"] || c.totalSpent) || 0,
-            lastVisitDate: formatGasDate(c["Last Visit Date"] || c.lastVisitDate),
-            lineUserId: c["LINE User ID"] || c.lineUserId || ""
-          }));
-        }
-
-        saveDatabase();
-
+      const updated = await pullFromGas(false);
+      if (updated) {
         return res.json({
           success: true,
-          message: "ดึงข้อมูลจาก Google Sheet อัปเดตลงเซิร์ฟเวอร์สำเร็จ!",
+          message: "ดึงข้อมูลจาก Google Sheet อัปเดตลงเซิร์ฟเวอร์สำเร็จ 100%!",
           data: db,
           counts: {
             bookings: db.bookings.length,
@@ -1355,10 +1543,9 @@ async function startServer() {
           }
         });
       }
-
-      return res.json({
+      return res.status(500).json({
         success: false,
-        message: "ไม่พบข้อมูลใน Google Sheet หรือรูปแบบไม่ถูกต้อง"
+        message: "ไม่สามารถดึงข้อมูลจาก Google Apps Script ได้"
       });
     } catch (err) {
       return res.status(500).json({
@@ -1375,43 +1562,62 @@ async function startServer() {
     if (!url) {
       return res.json({
         connected: false,
+        autoSyncActive: false,
         message: "ยังไม่ได้ระบุ Google Apps Script Web App URL",
         localCounts: {
           bookings: db.bookings.length,
           services: db.services.length,
           staff: db.staff.length,
           customers: db.customers.length
-        }
+        },
+        lastSync: lastGasSync
       });
     }
 
     try {
-      const testUrl = url.includes("?") ? `${url}&action=counts` : `${url}?action=counts`;
+      // Use pullAll which is 100% supported by GAS to retrieve real live counts
+      const testUrl = url.includes("?") ? `${url}&action=pullAll` : `${url}?action=pullAll`;
       const response = await fetch(testUrl, {
         method: "GET",
         headers: { "Accept": "application/json" },
         redirect: "follow"
       });
 
-      const text = await response.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (parseErr) {
+      const json = await response.json().catch(() => null);
+      if (!json || !json.data) {
         return res.json({
           connected: false,
-          error: "Google Apps Script ส่งข้อมูลกลับมาไม่ถูกต้อง (ไม่ใช่ JSON)",
-          raw: text.slice(0, 120),
+          autoSyncActive: false,
+          error: "Google Apps Script ตอบกลับข้อมูลไม่สมบูรณ์",
+          localCounts: {
+            bookings: db.bookings.length,
+            services: db.services.length,
+            staff: db.staff.length,
+            customers: db.customers.length
+          },
           lastSync: lastGasSync
         });
       }
 
+      const sheetCounts = {
+        bookings: Array.isArray(json.data.bookings) ? json.data.bookings.length : 0,
+        services: Array.isArray(json.data.services) ? json.data.services.length : 0,
+        staff: Array.isArray(json.data.staff) ? json.data.staff.length : 0,
+        customers: Array.isArray(json.data.customers) ? json.data.customers.length : 0
+      };
+
+      if (json.sheetUrl && !db.settings.googleSheetUrl) {
+        db.settings.googleSheetUrl = json.sheetUrl;
+        saveDatabase();
+      }
+
       return res.json({
         connected: true,
-        sheetUrl: db.settings.googleSheetUrl || "",
-        gasUser: data.user || "",
-        gasTimestamp: data.timestamp || new Date().toISOString(),
-        sheetCounts: data.counts || null,
+        autoSyncActive: true,
+        sheetUrl: json.sheetUrl || db.settings.googleSheetUrl || "",
+        driveFolderUrl: json.driveFolderUrl || db.settings.googleDriveFolderUrl || "",
+        gasTimestamp: json.timestamp || new Date().toISOString(),
+        sheetCounts,
         localCounts: {
           bookings: db.bookings.length,
           services: db.services.length,
@@ -1423,6 +1629,7 @@ async function startServer() {
     } catch (err) {
       return res.json({
         connected: false,
+        autoSyncActive: false,
         error: err.message,
         localCounts: {
           bookings: db.bookings.length,
@@ -1517,10 +1724,35 @@ async function startServer() {
     return res.status(400).json({ success: false, message: "Invalid webhook payload" });
   });
 
+  const httpServer = http.createServer(app);
+
+  // Automatic Background Startup Sync with Google Sheets
+  if (db.settings.gasWebAppUrl) {
+    pullFromGas(true)
+      .then(() => {
+        console.log("[Auto-Sync] Startup sync completed with Google Apps Script");
+      })
+      .catch((err) => {
+        console.warn("[Auto-Sync] Initial startup sync warning:", err.message);
+      });
+  }
+
+  // Automatic Periodic Background Sync (Every 30 seconds)
+  setInterval(() => {
+    if (db.settings.gasWebAppUrl) {
+      pullFromGas(true).catch(() => {});
+    }
+  }, 30000);
+
   // Vite Middleware for development vs Production Static Serving
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: {
+          server: httpServer
+        }
+      },
       appType: "spa"
     });
     app.use(vite.middlewares);
@@ -1532,7 +1764,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`The Bloom Studio server running on http://0.0.0.0:${PORT}`);
   });
 }

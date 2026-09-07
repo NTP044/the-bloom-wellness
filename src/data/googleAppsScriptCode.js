@@ -191,7 +191,8 @@ function setupSheets() {
     success: true,
     message: "สร้างโครงสร้าง 5 แท็บชีต และเชื่อมต่อ Google Workspace สำเร็จเรียบร้อยแล้ว!",
     sheets: ["Bookings", "Services", "Staff", "Customers", "Settings"],
-    driveFolderUrl: driveFolderUrl
+    driveFolderUrl: driveFolderUrl,
+    sheetUrl: ss.getUrl()
   };
 }
 
@@ -337,6 +338,7 @@ function pullAllData() {
 
   return {
     success: true,
+    sheetUrl: ss.getUrl(),
     data: {
       bookings: getSheetData("Bookings"),
       services: getSheetData("Services"),

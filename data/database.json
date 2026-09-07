@@ -53,6 +53,15 @@
       "duration": 90,
       "description": "ต่อขนตาเกรดไหมพรีเมียมนุ่มเบา ไม่ระคายเคืองตา ดูเป็นธรรมชาติและอ่อนหวาน",
       "icon": "Eye"
+    },
+    {
+      "id": "srv-rock",
+      "name": "หินร้อน (Facial Gua Sha & Hot Stone)",
+      "category": "Facial & Spa",
+      "price": 1199,
+      "duration": 80,
+      "description": "ศาสตร์กัวซายกกระชับกรอบหน้า กระตุ้นการไหลเวียนโลหิต ผสานหินร้อนสปาคลายความตึง",
+      "icon": "Plon"
     }
   ],
   "staff": [
@@ -116,6 +125,36 @@
         "srv-pedicure"
       ],
       "bio": "ผู้ชำนาญการต่อขนตาเส้นต่อเส้นและการดูแลเล็บสุขภาพดี"
+    },
+    {
+      "id": "stf-espa",
+      "name": "คุณเอสปา",
+      "nickname": "เอสปา",
+      "role": "Lash & Nail Design Master",
+      "experience": "ประสบการณ์ 5 ปี",
+      "rating": 5,
+      "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=301",
+      "skills": [
+        "srv-nails",
+        "srv-lashes",
+        "srv-pedicure"
+      ],
+      "bio": "ผู้ชำนาญการต่อขนตาเส้นต่อเส้นและการดูแลเล็บสุขภาพดี ที่ยั่งยืน"
+    },
+    {
+      "id": "stf-5",
+      "name": "คุณสมชาย",
+      "nickname": "สมชาย",
+      "role": "Holistic Spa & Body Specialist",
+      "experience": "ประสบการณ์ 7 ปี",
+      "rating": 4.92,
+      "avatar": "https://images.unsplash.com/photo-1580489944761-15a19d654956?w=300",
+      "skills": [
+        "srv-massage",
+        "srv-guasha",
+        "srv-facial"
+      ],
+      "bio": "เชี่ยวชาญศาสตร์การนวดคลายจุดกล้ามเนื้อลึก อโรมาเธอราปี และหินร้อนบำบัด"
     }
   ],
   "bookings": [
@@ -123,31 +162,13 @@
       "id": "BK-SAMPLE-01",
       "createdAt": "2026-09-07T02:30:00.000Z",
       "status": "pending",
-      "date": "2026-09-05",
-      "time": "13:34",
+      "date": "2026-09-02",
+      "time": "14:25",
+      "serviceId": "",
       "serviceName": "ทำเล็บเจล พรีเมียม (Gel Manicure & Art)",
       "servicePrice": 790,
       "serviceDuration": 60,
-      "staffName": "มีนา (Mina)",
-      "customerName": "คุณวรัญญา สิทธิสาร",
-      "customerPhone": "081-234-5678",
-      "customerEmail": "waranya@example.com",
-      "specialRequest": "ขอโทนสีนู้ดเรียบหรู",
-      "paymentStatus": "paid",
-      "paymentSlipUrl": "https://images.unsplash.com/photo-1580048915913-4f8f5cb481c4?w=600&auto=format&fit=crop&q=80",
-      "calendarEventId": "",
-      "lineUserId": "U1234567890abcdef",
-      "lineDisplayName": "Waranya S."
-    },
-    {
-      "id": "BK-SAMPLE-01",
-      "createdAt": "2026-09-07T02:30:00.000Z",
-      "status": "pending",
-      "date": "2026-09-05",
-      "time": "13:34",
-      "serviceName": "ทำเล็บเจล พรีเมียม (Gel Manicure & Art)",
-      "servicePrice": 790,
-      "serviceDuration": 60,
+      "staffId": "",
       "staffName": "มีนา (Mina)",
       "customerName": "คุณวรัญญา สิทธิสาร",
       "customerPhone": "081-234-5678",
@@ -168,6 +189,24 @@
       "totalBookings": 1,
       "totalSpent": 0,
       "lastVisitDate": "2026-09-06",
+      "lineUserId": ""
+    },
+    {
+      "customerPhone": "0812345678",
+      "customerName": "ทดสอบตรง",
+      "customerEmail": "test@example.com",
+      "totalBookings": 1,
+      "totalSpent": 790,
+      "lastVisitDate": "2026-09-09",
+      "lineUserId": ""
+    },
+    {
+      "customerPhone": "0891234567",
+      "customerName": "คุณทดสอบ สด",
+      "customerEmail": "",
+      "totalBookings": 1,
+      "totalSpent": 1290,
+      "lastVisitDate": "2026-09-07",
       "lineUserId": ""
     }
   ],

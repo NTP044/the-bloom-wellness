@@ -109,9 +109,9 @@ export default function AdminStaffTab({
 
       {/* Staff Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-4">
-        {staff.map((st) => (
+        {staff.map((st, idx) => (
           <div
-            key={st.id}
+            key={`${st.id || "staff"}-${idx}`}
             className="bg-white rounded-2xl border border-gray-100 p-5 shadow-xs flex flex-col justify-between hover:border-[#D4A373]/40 transition-colors"
           >
             <div className="space-y-4">
@@ -161,11 +161,11 @@ export default function AdminStaffTab({
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {Array.isArray(st.skills) && st.skills.length > 0 ? (
-                    st.skills.map((skillId) => {
+                    st.skills.map((skillId, sIdx) => {
                       const srv = services.find((s) => s.id === skillId);
                       return (
                         <span
-                          key={skillId}
+                          key={`${skillId}-${sIdx}`}
                           className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-[#D4A373]/10 text-[#a06f3e] border border-[#D4A373]/20"
                         >
                           {srv ? srv.name.split(" ")[0] : skillId}
