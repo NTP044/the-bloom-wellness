@@ -110,9 +110,10 @@ export function liffLogin() {
     if (liff.isLoggedIn && liff.isLoggedIn()) {
       return;
     }
-    // Call liff.login() with current URL as redirect target
+    // Call liff.login() with clean URL as redirect target
+    const cleanRedirectUri = window.location.origin + window.location.pathname;
     liff.login({
-      redirectUri: window.location.href,
+      redirectUri: cleanRedirectUri,
     });
   } catch (err) {
     console.error("[LIFF] Login failed:", err);
