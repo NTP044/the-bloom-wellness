@@ -1,7 +1,7 @@
 /**
  * The Bloom Studio - Google Apps Script (Code.gs)
  * All-in-One Google Workspace Integration (Spreadsheet, Drive, Calendar, Mail, Session, UrlFetch)
- * รองรับการเชื่อมข้อมูล 2 ทิศทาง (Two-Way Real-Time Synchronization) ทั้ง 5 แท็บ
+ * ระบบจัดการคิวจองและส่งอีเมลแจ้งเตือน Gmail อัตโนมัติ (Luxury HTML Email Templates)
  */
 
 export const GOOGLE_APPS_SCRIPT_CODE = `/**
@@ -9,19 +9,19 @@ export const GOOGLE_APPS_SCRIPT_CODE = `/**
  * 🌸 The Bloom Studio - Google Apps Script All-in-One Integration
  * Curated Beauty & Wellness Spa Management System
  * =========================================================================
- * Google Services Used (All-in-One Authorization):
+ * Google Services Used:
  *  1. SpreadsheetApp - จัดการ 5 แท็บชีต (Bookings, Services, Staff, Customers, Settings)
  *  2. DriveApp       - จัดการโฟลเดอร์เก็บสลิปและเอกสารร้าน
  *  3. CalendarApp    - ซิงค์นัดหมายลง Google Calendar ของร้านอัตโนมัติ
- *  4. MailApp        - ส่งอีเมลแจ้งเตือนการจองคิวใหม่ถึง Admin/Owner
+ *  4. MailApp / Gmail - ส่งอีเมลแจ้งเตือน HTML ดีไซน์หรูหราถึง Admin/Owner
  *  5. Session        - ตรวจสอบบัญชีผู้ใช้งานที่เปิดระบบ
- *  6. UrlFetchApp    - ส่ง Webhook กลับมายัง Server ของระบบจอง
+ *  6. UrlFetchApp    - ส่ง Webhook เชื่อมต่อกับระบบจอง
  * =========================================================================
  */
 
 /**
  * ⚡ ALL-IN-ONE AUTHORIZATION TRIGGER
- * เรียกใช้งาน Services ทั้ง 6 ตัวไว้ในฟังก์ชันเริ่มต้น เพื่อขอสิทธิ์ครบ 100% ในคลิกเดียว
+ * เรียกใช้งาน Services ทั้งหมดไว้ในฟังก์ชันเริ่มต้น เพื่อขอสิทธิ์ครบ 100% ในคลิกเดียว
  */
 function authorizeAllServices() {
   try {
@@ -29,7 +29,7 @@ function authorizeAllServices() {
     const rootFolder = DriveApp.getRootFolder();
     const defaultCal = CalendarApp.getDefaultCalendar();
     const quota = MailApp.getRemainingDailyQuota();
-    const userEmail = Session.getActiveUser().getEmail();
+    const userEmail = Session.getEffectiveUser().getEmail() || Session.getActiveUser().getEmail();
     const testPing = UrlFetchApp.getRequest("https://www.google.com");
 
     Logger.log("✅ All Google Services Authorized Successfully! User: " + userEmail + ", Mail Quota: " + quota);
@@ -48,12 +48,13 @@ function onOpen() {
   ui.createMenu("🌸 The Bloom Studio")
     .addItem("⚡ 1-Click Setup โครงสร้าง 5 แท็บ & ขอสิทธิ์ทั้งหมด", "setupSheets")
     .addSeparator()
+    .addItem("✉️ ทดสอบส่งอีเมลแจ้งเตือน Admin", "testEmailNotification")
+    .addSeparator()
     .addItem("📥 ส่งข้อมูลจากชีตกลับไประบบจอง (Push to System Webhook)", "pushToWebApp")
     .addItem("📤 ดึงข้อมูลล่าสุดจากระบบจองลงชีต (Pull from System)", "pullFromWebApp")
     .addSeparator()
     .addItem("📁 เปิดโฟลเดอร์ Google Drive", "openDriveFolder")
     .addItem("📅 เปิดดู Google Calendar", "openCalendar")
-    .addItem("✉️ ทดสอบส่งอีเมลแจ้งเตือน Admin", "testEmailNotification")
     .addToUi();
 }
 
@@ -80,7 +81,6 @@ function setupSheets() {
   } else {
     bookingsSheet.getRange(1, 1, 1, bookingsHeaders.length).setValues([bookingsHeaders]);
   }
-  // ตั้งค่าคอลัมน์ Phone, Date, Time ให้เป็น Plain Text เพื่อไม่ให้เลข 0 นำหน้าหรือรูปแบบเวลาหาย
   bookingsSheet.getRange("D:E").setNumberFormat("@");
   bookingsSheet.getRange("K:K").setNumberFormat("@");
   formatHeaderRow(bookingsSheet, bookingsHeaders.length, "#F4EAE0", "#3E2723");
@@ -102,7 +102,7 @@ function setupSheets() {
   if (servicesSheet.getLastRow() <= 1) {
     servicesSheet.clear();
     servicesSheet.appendRow(servicesHeaders);
-    defaultServices.forEach(row => servicesSheet.appendRow(row));
+    defaultServices.forEach(function(row) { servicesSheet.appendRow(row); });
   }
   formatHeaderRow(servicesSheet, servicesHeaders.length, "#F4EAE0", "#3E2723");
 
@@ -121,7 +121,7 @@ function setupSheets() {
   if (staffSheet.getLastRow() <= 1) {
     staffSheet.clear();
     staffSheet.appendRow(staffHeaders);
-    defaultStaff.forEach(row => staffSheet.appendRow(row));
+    defaultStaff.forEach(function(row) { staffSheet.appendRow(row); });
   }
   formatHeaderRow(staffSheet, staffHeaders.length, "#F4EAE0", "#3E2723");
 
@@ -163,8 +163,10 @@ function setupSheets() {
     driveFolderUrl = "https://drive.google.com";
   }
 
+  const effectiveEmail = Session.getEffectiveUser().getEmail() || Session.getActiveUser().getEmail() || "NatapongMumklang@gmail.com";
+
   const defaultSettings = [
-    ["OwnerEmail", Session.getActiveUser().getEmail() || "NatapongMumklang@gmail.com", "อีเมลเจ้าของร้านสำหรับรับการแจ้งเตือนคิวจอง"],
+    ["OwnerEmail", effectiveEmail, "อีเมลเจ้าของร้าน/Admin สำหรับรับการแจ้งเตือนคิวจองและการเงินอัตโนมัติ"],
     ["PromptPayNumber", "0812345678", "เบอร์พร้อมเพย์รับชำระเงินของ The Bloom Studio"],
     ["ShopName", "The Bloom Studio", "ชื่อแบรนด์ร้านความงามและสปา"],
     ["ServerWebhookUrl", "", "URL เซิร์ฟเวอร์ของระบบจอง"],
@@ -176,7 +178,7 @@ function setupSheets() {
   if (settingsSheet.getLastRow() <= 1) {
     settingsSheet.clear();
     settingsSheet.appendRow(settingsHeaders);
-    defaultSettings.forEach(row => settingsSheet.appendRow(row));
+    defaultSettings.forEach(function(row) { settingsSheet.appendRow(row); });
   }
   settingsSheet.getRange("B:B").setNumberFormat("@");
   formatHeaderRow(settingsSheet, settingsHeaders.length, "#F4EAE0", "#3E2723");
@@ -217,6 +219,485 @@ function formatHeaderRow(sheet, numColumns, bgColor, textColor) {
 
 /**
  * =========================================================================
+ * 📧 ADMIN EMAIL CONFIGURATION & LUXURY HTML EMAIL ENGINE
+ * =========================================================================
+ */
+
+/**
+ * 1. ดึงอีเมล Admin จากแท็บ Settings (แถว OwnerEmail)
+ * หากไม่ได้ระบุไว้ ให้ดึงอีเมลของเจ้าของบัญชี Google Sheet อัตโนมัติ
+ */
+function getAdminEmail(ss) {
+  try {
+    if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (ss) {
+      const settingsSheet = ss.getSheetByName("Settings");
+      if (settingsSheet) {
+        const data = settingsSheet.getDataRange().getDisplayValues();
+        for (let i = 1; i < data.length; i++) {
+          const key = String(data[i][0] || "").trim().toLowerCase();
+          const val = String(data[i][1] || "").trim();
+          if ((key === "owneremail" || key === "adminemail") && val && val.indexOf("@") !== -1) {
+            return val;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    Logger.log("getAdminEmail error: " + err.toString());
+  }
+
+  // Fallback: ดึงอีเมลเจ้าของบัญชี Google Sheet อัตโนมัติ
+  let fallback = "";
+  try {
+    fallback = Session.getEffectiveUser().getEmail();
+  } catch (e) {}
+  if (!fallback) {
+    try {
+      fallback = Session.getActiveUser().getEmail();
+    } catch (e) {}
+  }
+  return fallback || "NatapongMumklang@gmail.com";
+}
+
+/**
+ * 2. สร้างโครงสร้าง Luxury HTML Email สไตล์ The Bloom Studio ตรงตามดีไซน์พรีเมียม (Card-Based Luxury Layout)
+ */
+function buildLuxuryEmailHtml(params) {
+  const badgeText = params.badgeText || "🔔 NEW BOOKING ALERT";
+  const badgeBg = params.badgeBg || "#1E5A44";
+  const badgeColor = params.badgeColor || "#FFFFFF";
+  const headerTitle = params.headerTitle || "The Bloom Studio";
+  const subTitle = params.subTitle || "มีการจองคิวบริการ Wellness & Beauty ใหม่เข้ามาในระบบ";
+  const innerCardHtml = params.innerCardHtml || "";
+  const actionButtonHtml = params.actionButtonHtml || "";
+  const footerNote = params.footerNote || "ข้อมูลนี้ถูกบันทึกลง Google Sheet และ Google Calendar เรียบร้อยแล้วแบบ Real-Time";
+
+  return '<!DOCTYPE html>' +
+  '<html>' +
+  '<head>' +
+    '<meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+    '<title>' + headerTitle + '</title>' +
+  '</head>' +
+  '<body style="margin: 0; padding: 0; background-color: #FAF6F0; font-family: Sarabun, Tahoma, Arial, Helvetica, sans-serif; -webkit-font-smoothing: antialiased;">' +
+    '<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #FAF6F0; padding: 35px 15px;">' +
+      '<tr>' +
+        '<td align="center">' +
+          '<table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; background-color: #FFFFFF; border-radius: 28px; border: 1px solid #EBE4DA; box-shadow: 0 10px 30px rgba(0,0,0,0.03); overflow: hidden;">' +
+            '<tr>' +
+              '<td style="padding: 36px 32px 30px 32px;">' +
+                '<!-- Top Badge -->' +
+                '<div style="text-align: center; margin-bottom: 14px;">' +
+                  '<span style="display: inline-block; background-color: ' + badgeBg + '; color: ' + badgeColor + '; font-size: 12px; font-weight: 800; padding: 7px 20px; border-radius: 50px; letter-spacing: 0.8px; text-transform: uppercase;">' +
+                    badgeText +
+                  '</span>' +
+                '</div>' +
+                '<!-- Title & Subtitle -->' +
+                '<h1 style="margin: 0 0 8px 0; text-align: center; font-size: 26px; font-weight: 800; color: #322520; letter-spacing: -0.2px;">' +
+                  headerTitle +
+                '</h1>' +
+                '<p style="margin: 0 0 22px 0; text-align: center; font-size: 14px; color: #6D5E55; font-weight: 400; line-height: 1.4;">' +
+                  subTitle +
+                '</p>' +
+                '<!-- Divider -->' +
+                '<div style="height: 1px; background-color: #EFE8DE; margin: 0 0 24px 0;"></div>' +
+                '<!-- Inner Cream Box -->' +
+                innerCardHtml +
+                '<!-- CTA Action Button -->' +
+                actionButtonHtml +
+                '<!-- Bottom Footer Note -->' +
+                '<p style="margin: 22px 0 0 0; text-align: center; font-size: 13px; color: #3A302A; font-weight: 400; line-height: 1.5;">' +
+                  footerNote +
+                '</p>' +
+              '</td>' +
+            '</tr>' +
+          '</table>' +
+        '</td>' +
+      '</tr>' +
+    '</table>' +
+  '</body>' +
+  '</html>';
+}
+
+/**
+ * 3. เทมเพลต: มีการจองใหม่ (New Booking) - ออกแบบตรงตามตัวอย่างในภาพ 100%
+ */
+function sendNewBookingEmail(b, ss) {
+  if (!b) return false;
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+  const adminEmail = getAdminEmail(ss);
+  if (!adminEmail) return false;
+
+  const subject = "🔔 มีการจองใหม่ - " + (b.customerName || "ลูกค้า") + " " + (b.date || "") + " เวลา " + (b.time || "") + " น.";
+  const sheetUrl = ss ? ss.getUrl() : "https://sheets.google.com";
+  const duration = Number(b.serviceDuration) || 60;
+  const rawPrice = Number(b.servicePrice || 0);
+  const formattedPrice = rawPrice.toLocaleString() + " บาท";
+  const bookingId = b.id || ("BLM-" + Date.now().toString(36).toUpperCase());
+  const slipUrl = b.paymentSlipUrl || "";
+
+  let payStatusText = '<span style="color: #008264; font-weight: 700; font-size: 14px;">แนบสลิปแล้ว (Paid Slip)</span>';
+  if (b.paymentStatus === 'pending' && !slipUrl) {
+    payStatusText = '<span style="color: #C46210; font-weight: 700; font-size: 14px;">รอชำระเงิน (Pending)</span>';
+  } else if (b.paymentStatus === 'confirmed') {
+    payStatusText = '<span style="color: #008264; font-weight: 700; font-size: 14px;">ยืนยันแล้ว (Confirmed)</span>';
+  }
+
+  let specialReqRow = "";
+  if (b.specialRequest && String(b.specialRequest).trim() !== "-") {
+    specialReqRow = '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500; vertical-align: top;">คำขอพิเศษ:</td>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #5D4037; font-style: italic;">' + b.specialRequest + '</td>' +
+    '</tr>';
+  }
+
+  const innerCardHtml = '<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #FAF6F0; border: 1px solid #EFE7DC; border-radius: 20px; padding: 24px 28px; margin-bottom: 26px;">' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500; width: 40%;">รหัสการจอง:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #C68A4C; font-weight: 700; letter-spacing: 0.5px;">' + bookingId + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">ลูกค้า:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #1A1A1A; font-weight: 700;">' + (b.customerName || '-') + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">เบอร์โทรศัพท์:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; font-weight: 700;"><a href="tel:' + (b.customerPhone || '') + '" style="color: #1D64B4; text-decoration: none; font-weight: 700;">' + (b.customerPhone || '-') + '</a></td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">อีเมลลูกค้า:</td>' +
+      '<td style="padding: 6px 0; font-size: 14px;"><a href="mailto:' + (b.customerEmail || '') + '" style="color: #1D64B4; text-decoration: underline;">' + (b.customerEmail || '-') + '</a></td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">บริการ:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #1A1A1A; font-weight: 700;">' + (b.serviceName || '-') + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">ช่างผู้ให้บริการ:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #8B3A1C; font-weight: 700;">' + (b.staffName || 'ช่างประจำร้าน') + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">วันและเวลานัดหมาย:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #008264; font-weight: 700;">' + (b.date || '-') + ' เวลา ' + (b.time || '-') + ' น. (' + duration + ' นาที)</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">ยอดชำระ:</td>' +
+      '<td style="padding: 6px 0; font-size: 16px; color: #C46210; font-weight: 800;">' + formattedPrice + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">สถานะการชำระเงิน:</td>' +
+      '<td style="padding: 6px 0;">' + payStatusText + '</td>' +
+    '</tr>' +
+    specialReqRow +
+  '</table>';
+
+  let ctaBtnUrl = slipUrl || sheetUrl;
+  let ctaBtnText = slipUrl ? "🖼️ คลิกเพื่อดูสลิปโอนเงินบน Google Drive" : "📊 เปิดดูข้อมูลใน Google Sheet & Calendar";
+
+  const actionButtonHtml = '<div style="text-align: center; margin-bottom: 24px;">' +
+    '<a href="' + ctaBtnUrl + '" target="_blank" style="display: inline-block; background-color: #006E4E; color: #FFFFFF; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 28px; border-radius: 12px; box-shadow: 0 4px 14px rgba(0, 110, 78, 0.25);">' +
+      ctaBtnText +
+    '</a>' +
+  '</div>';
+
+  const htmlBody = buildLuxuryEmailHtml({
+    badgeText: "🔔 NEW BOOKING ALERT",
+    badgeBg: "#1E5A44",
+    badgeColor: "#FFFFFF",
+    headerTitle: "The Bloom Studio",
+    subTitle: "มีการจองคิวบริการ Wellness & Beauty ใหม่เข้ามาในระบบ",
+    innerCardHtml: innerCardHtml,
+    actionButtonHtml: actionButtonHtml,
+    footerNote: "ข้อมูลนี้ถูกบันทึกลง Google Sheet และ Google Calendar เรียบร้อยแล้วแบบ Real-Time"
+  });
+
+  try {
+    MailApp.sendEmail({
+      to: adminEmail,
+      subject: subject,
+      htmlBody: htmlBody
+    });
+    Logger.log("✅ Sent New Booking Email to: " + adminEmail);
+    return true;
+  } catch (err) {
+    Logger.log("⚠️ Error sending new booking email: " + err.toString());
+    return false;
+  }
+}
+
+/**
+ * 4. เทมเพลต: แจ้งเตือนการยกเลิกคิว (Booking Cancelled)
+ */
+function sendCancelledBookingEmail(b, ss) {
+  if (!b) return false;
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+  const adminEmail = getAdminEmail(ss);
+  if (!adminEmail) return false;
+
+  const subject = "❌ แจ้งเตือนการยกเลิกคิว - " + (b.customerName || "ลูกค้า") + " " + (b.date || "") + " เวลา " + (b.time || "") + " น.";
+  const sheetUrl = ss ? ss.getUrl() : "https://sheets.google.com";
+  const calendarUrl = "https://calendar.google.com";
+  const bookingId = b.id || ("BLM-" + Date.now().toString(36).toUpperCase());
+
+  const innerCardHtml = '<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #FAF6F0; border: 1px solid #EFE7DC; border-radius: 20px; padding: 24px 28px; margin-bottom: 26px;">' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500; width: 40%;">รหัสการจอง:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #C68A4C; font-weight: 700; letter-spacing: 0.5px;">' + bookingId + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">ลูกค้า:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #1A1A1A; font-weight: 700;">' + (b.customerName || '-') + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">เบอร์โทรศัพท์:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; font-weight: 700;"><a href="tel:' + (b.customerPhone || '') + '" style="color: #1D64B4; text-decoration: none; font-weight: 700;">' + (b.customerPhone || '-') + '</a></td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">บริการที่ยกเลิก:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #1A1A1A; font-weight: 700;">' + (b.serviceName || '-') + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">ช่างผู้ให้บริการ:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #8B3A1C; font-weight: 700;">' + (b.staffName || 'ช่างประจำร้าน') + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">วันและเวลานัดเดิม:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #C62828; font-weight: 700;">' + (b.date || '-') + ' เวลา ' + (b.time || '-') + ' น.</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">สถานะ:</td>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #C62828; font-weight: 700;">ยกเลิกคิวแล้ว (Cancelled)</td>' +
+    '</tr>' +
+  '</table>';
+
+  const actionButtonHtml = '<div style="text-align: center; margin-bottom: 24px;">' +
+    '<a href="' + calendarUrl + '" target="_blank" style="display: inline-block; background-color: #3E2723; color: #FFFFFF; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 28px; border-radius: 12px; box-shadow: 0 4px 14px rgba(62, 39, 35, 0.25);">' +
+      '📅 จัดการตารางเวลาใน Google Calendar' +
+    '</a>' +
+  '</div>';
+
+  const htmlBody = buildLuxuryEmailHtml({
+    badgeText: "❌ BOOKING CANCELLED",
+    badgeBg: "#C62828",
+    badgeColor: "#FFFFFF",
+    headerTitle: "The Bloom Studio",
+    subTitle: "แจ้งเตือนรายการยกเลิกคิวจองในระบบ",
+    innerCardHtml: innerCardHtml,
+    actionButtonHtml: actionButtonHtml,
+    footerNote: "ช่วงเวลานี้ว่างลงแล้ว พร้อมเปิดรับคิวใหม่สำหรับลูกค้าท่านอื่น"
+  });
+
+  try {
+    MailApp.sendEmail({
+      to: adminEmail,
+      subject: subject,
+      htmlBody: htmlBody
+    });
+    Logger.log("✅ Sent Cancellation Email to: " + adminEmail);
+    return true;
+  } catch (err) {
+    Logger.log("⚠️ Error sending cancellation email: " + err.toString());
+    return false;
+  }
+}
+
+/**
+ * 5. เทมเพลต: มีการแนบสลิปโอนเงินใหม่ (Payment Slip Attached)
+ */
+function sendPaymentSlipEmail(b, ss) {
+  if (!b) return false;
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+  const adminEmail = getAdminEmail(ss);
+  if (!adminEmail) return false;
+
+  const subject = "💳 มีการแนบสลิปโอนเงินใหม่ - " + (b.customerName || "ลูกค้า") + " [" + (b.id || "คิวจอง") + "]";
+  const sheetUrl = ss ? ss.getUrl() : "https://sheets.google.com";
+  const slipUrl = b.paymentSlipUrl || "";
+  const rawPrice = Number(b.servicePrice || 0);
+  const formattedPrice = rawPrice.toLocaleString() + " บาท";
+  const bookingId = b.id || ("BLM-" + Date.now().toString(36).toUpperCase());
+
+  let slipPreviewHtml = "";
+  if (slipUrl) {
+    slipPreviewHtml = '<div style="margin-top: 16px; text-align: center; background-color: #FFFFFF; padding: 12px; border-radius: 14px; border: 1px solid #EAE0D5;">' +
+      '<div style="font-size: 12px; font-weight: 700; color: #5D4037; margin-bottom: 8px;">📷 ภาพตัวอย่างสลิปโอนเงิน (PAYMENT SLIP PREVIEW)</div>' +
+      '<div style="max-width: 280px; margin: 0 auto; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); border: 1px solid #D7CCC8;">' +
+        '<img src="' + slipUrl + '" alt="Payment Slip" style="width: 100%; height: auto; display: block;" />' +
+      '</div>' +
+    '</div>';
+  }
+
+  const innerCardHtml = '<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #FAF6F0; border: 1px solid #EFE7DC; border-radius: 20px; padding: 24px 28px; margin-bottom: 26px;">' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500; width: 40%;">รหัสการจอง:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #C68A4C; font-weight: 700; letter-spacing: 0.5px;">' + bookingId + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">ลูกค้า:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #1A1A1A; font-weight: 700;">' + (b.customerName || '-') + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">เบอร์โทรศัพท์:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; font-weight: 700;"><a href="tel:' + (b.customerPhone || '') + '" style="color: #1D64B4; text-decoration: none; font-weight: 700;">' + (b.customerPhone || '-') + '</a></td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">บริการ:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #1A1A1A; font-weight: 700;">' + (b.serviceName || '-') + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">วันและเวลานัดหมาย:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #008264; font-weight: 700;">' + (b.date || '-') + ' เวลา ' + (b.time || '-') + ' น.</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">ยอดชำระในสลิป:</td>' +
+      '<td style="padding: 6px 0; font-size: 16px; color: #C46210; font-weight: 800;">' + formattedPrice + '</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">สถานะ:</td>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #008264; font-weight: 700;">แนบสลิปแล้ว (Paid Slip)</td>' +
+    '</tr>' +
+    (slipPreviewHtml ? '<tr><td colspan="2">' + slipPreviewHtml + '</td></tr>' : '') +
+  '</table>';
+
+  const ctaUrl = slipUrl || sheetUrl;
+  const actionButtonHtml = '<div style="text-align: center; margin-bottom: 24px;">' +
+    '<a href="' + ctaUrl + '" target="_blank" style="display: inline-block; background-color: #006E4E; color: #FFFFFF; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 28px; border-radius: 12px; box-shadow: 0 4px 14px rgba(0, 110, 78, 0.25);">' +
+      '🖼️ คลิกเพื่อดูสลิปโอนเงินบน Google Drive' +
+    '</a>' +
+  '</div>';
+
+  const htmlBody = buildLuxuryEmailHtml({
+    badgeText: "💳 NEW PAYMENT SLIP",
+    badgeBg: "#1565C0",
+    badgeColor: "#FFFFFF",
+    headerTitle: "The Bloom Studio",
+    subTitle: "ลูกค้าได้แนบหลักฐานการโอนเงินชำระค่าบริการ",
+    innerCardHtml: innerCardHtml,
+    actionButtonHtml: actionButtonHtml,
+    footerNote: "โปรดตรวจสอบความถูกต้องของยอดเงินและเวลาในสลิปกับบัญชีธนาคารของร้านค้า"
+  });
+
+  try {
+    MailApp.sendEmail({
+      to: adminEmail,
+      subject: subject,
+      htmlBody: htmlBody
+    });
+    Logger.log("✅ Sent Payment Slip Email to: " + adminEmail);
+    return true;
+  } catch (err) {
+    Logger.log("⚠️ Error sending payment slip email: " + err.toString());
+    return false;
+  }
+}
+
+/**
+ * 6. เมนู & API: ทดสอบส่งอีเมลแจ้งเตือน Admin (Test Email Trigger)
+ */
+function testEmailNotification(targetEmail) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const adminEmail = targetEmail || getAdminEmail(ss);
+  
+  if (!adminEmail) {
+    const msg = "ไม่พบบัญชีอีเมลผู้รับ กรุณาระบุ OwnerEmail ในแท็บ Settings หรือลงชื่อเข้าใช้ Google";
+    if (typeof SpreadsheetApp.getUi === "function") {
+      try { SpreadsheetApp.getUi().alert(msg); } catch (e) {}
+    }
+    return { success: false, message: msg };
+  }
+
+  const quota = MailApp.getRemainingDailyQuota();
+  const sheetUrl = ss ? ss.getUrl() : "https://sheets.google.com";
+
+  const innerCardHtml = '<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #FAF6F0; border: 1px solid #EFE7DC; border-radius: 20px; padding: 24px 28px; margin-bottom: 26px;">' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500; width: 40%;">รหัสการจอง:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #C68A4C; font-weight: 700; letter-spacing: 0.5px;">BLM-1LG3AH90</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">ลูกค้า:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #1A1A1A; font-weight: 700;">mac</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">เบอร์โทรศัพท์:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; font-weight: 700;"><a href="tel:0991234567" style="color: #1D64B4; text-decoration: none; font-weight: 700;">0991234567</a></td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">อีเมลลูกค้า:</td>' +
+      '<td style="padding: 6px 0; font-size: 14px;"><a href="mailto:' + adminEmail + '" style="color: #1D64B4; text-decoration: underline;">' + adminEmail + '</a></td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">บริการ:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #1A1A1A; font-weight: 700;">ทำเล็บเจลพรีเมียม (Gel Manicure Art)</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">ช่างผู้ให้บริการ:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #8B3A1C; font-weight: 700;">ช่างพลอย (Ploy)</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">วันและเวลานัดหมาย:</td>' +
+      '<td style="padding: 6px 0; font-size: 15px; color: #008264; font-weight: 700;">2026-09-08 เวลา 10:00 น. (60 นาที)</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">ยอดชำระ:</td>' +
+      '<td style="padding: 6px 0; font-size: 16px; color: #C46210; font-weight: 800;">690 บาท</td>' +
+    '</tr>' +
+    '<tr>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #706155; font-weight: 500;">สถานะการชำระเงิน:</td>' +
+      '<td style="padding: 6px 0; font-size: 14px; color: #008264; font-weight: 700;">แนบสลิปแล้ว (Paid Slip)</td>' +
+    '</tr>' +
+  '</table>';
+
+  const actionButtonHtml = '<div style="text-align: center; margin-bottom: 24px;">' +
+    '<a href="' + sheetUrl + '" target="_blank" style="display: inline-block; background-color: #006E4E; color: #FFFFFF; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 28px; border-radius: 12px; box-shadow: 0 4px 14px rgba(0, 110, 78, 0.25);">' +
+      '🖼️ คลิกเพื่อดูสลิปโอนเงินบน Google Drive' +
+    '</a>' +
+  '</div>';
+
+  const htmlBody = buildLuxuryEmailHtml({
+    badgeText: "🔔 NEW BOOKING ALERT",
+    badgeBg: "#1E5A44",
+    badgeColor: "#FFFFFF",
+    headerTitle: "The Bloom Studio",
+    subTitle: "มีการจองคิวบริการ Wellness & Beauty ใหม่เข้ามาในระบบ",
+    innerCardHtml: innerCardHtml,
+    actionButtonHtml: actionButtonHtml,
+    footerNote: "ข้อมูลนี้ถูกบันทึกลง Google Sheet และ Google Calendar เรียบร้อยแล้วแบบ Real-Time (โควต้าคงเหลือ: " + quota + " ฉบับ/วัน)"
+  });
+
+  try {
+    MailApp.sendEmail({
+      to: adminEmail,
+      subject: "🌸 [ทดสอบระบบ] The Bloom Studio - Google Workspace Notification",
+      htmlBody: htmlBody
+    });
+
+    if (typeof SpreadsheetApp.getUi === "function") {
+      try {
+        SpreadsheetApp.getUi().alert(
+          "ส่งอีเมลทดสอบดีไซน์หรูหราไปยัง " + adminEmail + " สำเร็จเรียบร้อยแล้ว!\\n\\n" +
+          "โควต้าส่งอีเมลคงเหลือประจำวัน: " + quota + " ฉบับ"
+        );
+      } catch (e) {}
+    }
+
+    return {
+      success: true,
+      message: "ส่งอีเมลทดสอบไปยัง " + adminEmail + " เรียบร้อยแล้ว!",
+      adminEmail: adminEmail,
+      mailQuota: quota
+    };
+  } catch (err) {
+    if (typeof SpreadsheetApp.getUi === "function") {
+      try { SpreadsheetApp.getUi().alert("เกิดข้อผิดพลาดในการส่งอีเมล: " + err.toString()); } catch (e) {}
+    }
+    return { success: false, error: err.toString() };
+  }
+}
+
+/**
+ * =========================================================================
  * WEB APP API HANDLERS (doGet & doPost)
  * รองรับการเชื่อมต่อกับระบบหลังบ้านผ่าน JSON RESTful API
  * =========================================================================
@@ -232,7 +713,8 @@ function doGet(e) {
       status: "online",
       app: "The Bloom Studio Google Apps Script Web App",
       timestamp: new Date().toISOString(),
-      user: Session.getActiveUser().getEmail()
+      user: Session.getEffectiveUser().getEmail() || Session.getActiveUser().getEmail(),
+      mailQuota: MailApp.getRemainingDailyQuota()
     };
   } else if (action === "setup") {
     result = setupSheets();
@@ -240,6 +722,8 @@ function doGet(e) {
     result = pullAllData();
   } else if (action === "counts") {
     result = getSheetCounts();
+  } else if (action === "testEmail") {
+    result = testEmailNotification(e && e.parameter ? e.parameter.email : null);
   } else {
     result = { success: false, message: "Unknown action: " + action };
   }
@@ -262,7 +746,8 @@ function doPost(e) {
         success: true,
         status: "online",
         timestamp: new Date().toISOString(),
-        user: Session.getActiveUser().getEmail()
+        user: Session.getEffectiveUser().getEmail() || Session.getActiveUser().getEmail(),
+        mailQuota: MailApp.getRemainingDailyQuota()
       };
     } else if (action === "setup") {
       result = setupSheets();
@@ -272,12 +757,14 @@ function doPost(e) {
       result = pullAllData();
     } else if (action === "counts") {
       result = getSheetCounts();
+    } else if (action === "testEmail") {
+      result = testEmailNotification(body.email);
     } else if (action === "addBooking") {
       result = handleAddBooking(body.booking);
     } else if (action === "updateBookingStatus") {
-      result = handleUpdateBookingStatus(body.bookingId, body.status, body.updates);
+      result = handleUpdateBookingStatus(body.bookingId, body.status, body.updates, body.booking);
     } else if (action === "deleteBooking") {
-      result = handleDeleteBooking(body.bookingId);
+      result = handleDeleteBooking(body.bookingId, body.booking);
     } else if (action === "syncServices") {
       result = syncServicesData(body.services);
     } else if (action === "syncStaff") {
@@ -302,14 +789,16 @@ function doPost(e) {
  */
 function getSheetCounts() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const getCount = (name) => {
+  const getCount = function(name) {
     const s = ss.getSheetByName(name);
     return s ? Math.max(0, s.getLastRow() - 1) : 0;
   };
   return {
     success: true,
     status: "online",
-    user: Session.getActiveUser().getEmail(),
+    user: Session.getEffectiveUser().getEmail() || Session.getActiveUser().getEmail(),
+    adminEmail: getAdminEmail(ss),
+    mailQuota: MailApp.getRemainingDailyQuota(),
     timestamp: new Date().toISOString(),
     counts: {
       bookings: getCount("Bookings"),
@@ -327,15 +816,15 @@ function getSheetCounts() {
 function pullAllData() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  const getSheetData = (sheetName) => {
+  const getSheetData = function(sheetName) {
     const sheet = ss.getSheetByName(sheetName);
     if (!sheet) return [];
     const values = sheet.getDataRange().getDisplayValues();
     if (values.length <= 1) return [];
     const headers = values[0];
-    return values.slice(1).map(row => {
+    return values.slice(1).map(function(row) {
       let obj = {};
-      headers.forEach((h, idx) => { obj[h] = row[idx] !== undefined ? row[idx] : ""; });
+      headers.forEach(function(h, idx) { obj[h] = row[idx] !== undefined ? row[idx] : ""; });
       return obj;
     });
   };
@@ -343,6 +832,7 @@ function pullAllData() {
   return {
     success: true,
     sheetUrl: ss.getUrl(),
+    adminEmail: getAdminEmail(ss),
     data: {
       bookings: getSheetData("Bookings"),
       services: getSheetData("Services"),
@@ -379,7 +869,7 @@ function pushAllData(dbData) {
     sheet.getRange("D:E").setNumberFormat("@");
     sheet.getRange("K:K").setNumberFormat("@");
 
-    dbData.bookings.forEach(b => {
+    dbData.bookings.forEach(function(b) {
       sheet.appendRow([
         String(b.id || ""),
         String(b.createdAt || ""),
@@ -445,7 +935,7 @@ function syncServicesData(services) {
   const headers = ["ID", "Name", "Category", "Price", "DurationMinutes", "Description", "Icon"];
   sheet.appendRow(headers);
 
-  services.forEach(s => {
+  services.forEach(function(s) {
     sheet.appendRow([
       String(s.id || ""),
       String(s.name || ""),
@@ -474,7 +964,7 @@ function syncStaffData(staffList) {
   const headers = ["ID", "Name", "Nickname", "Role", "Experience", "Rating", "Avatar", "Services", "Bio"];
   sheet.appendRow(headers);
 
-  staffList.forEach(st => {
+  staffList.forEach(function(st) {
     const srvSkills = Array.isArray(st.skills) ? st.skills.join(", ") : String(st.skills || st.services || "");
     sheet.appendRow([
       String(st.id || ""),
@@ -507,7 +997,7 @@ function syncCustomersData(customers) {
   sheet.appendRow(headers);
   sheet.getRange("A:A").setNumberFormat("@");
 
-  customers.forEach(c => {
+  customers.forEach(function(c) {
     sheet.appendRow([
       String(c.customerPhone || c["Customer Phone"] || ""),
       String(c.customerName || c["Customer Name"] || ""),
@@ -537,8 +1027,10 @@ function syncSettingsData(settings) {
   sheet.appendRow(headers);
   sheet.getRange("B:B").setNumberFormat("@");
 
+  const effectiveEmail = Session.getEffectiveUser().getEmail() || Session.getActiveUser().getEmail() || "NatapongMumklang@gmail.com";
+
   const settingsRows = [
-    ["OwnerEmail", String(settings.ownerEmail || Session.getActiveUser().getEmail() || ""), "อีเมลเจ้าของร้านสำหรับรับการแจ้งเตือนคิวจอง"],
+    ["OwnerEmail", String(settings.ownerEmail || effectiveEmail), "อีเมลเจ้าของร้าน/Admin สำหรับรับการแจ้งเตือนคิวจองและการเงินอัตโนมัติ"],
     ["PromptPayNumber", String(settings.promptPayNumber || "0812345678"), "เบอร์พร้อมเพย์รับชำระเงินของ The Bloom Studio"],
     ["ShopName", String(settings.shopName || "The Bloom Studio"), "ชื่อแบรนด์ร้านความงามและสปา"],
     ["ServerWebhookUrl", String(settings.serverWebhookUrl || ""), "URL เซิร์ฟเวอร์ของระบบจอง"],
@@ -546,13 +1038,13 @@ function syncSettingsData(settings) {
     ["GoogleDriveFolderId", String(settings.googleDriveFolderId || ""), "Folder ID ของ Google Drive"],
     ["GoogleCalendarId", String(settings.googleCalendarId || "primary"), "ID ของ Google Calendar ที่ใช้ลงบันทึกนัดหมาย"]
   ];
-  settingsRows.forEach(row => sheet.appendRow(row));
+  settingsRows.forEach(function(row) { sheet.appendRow(row); });
   formatHeaderRow(sheet, headers.length, "#F4EAE0", "#3E2723");
   return { success: true, count: settingsRows.length };
 }
 
 /**
- * รับการจองใหม่: เขียนลงชีต Bookings, บันทึก Calendar Event, ส่งเมลหา Admin, อัปเดต Customers CRM
+ * รับการจองใหม่: เขียนลงชีต Bookings, บันทึก Calendar Event, ส่งอีเมลแจ้งเตือนหรูหราหา Admin, อัปเดต Customers CRM
  */
 function handleAddBooking(b) {
   if (!b) return { success: false, message: "No booking data" };
@@ -628,21 +1120,12 @@ function handleAddBooking(b) {
     sheet.appendRow(bookingRowData);
   }
 
-  // 3. ส่งอีเมลแจ้งเตือนเจ้าของร้าน
-  try {
-    const userEmail = Session.getActiveUser().getEmail() || "NatapongMumklang@gmail.com";
-    const subject = "🌸 คิวจองใหม่: " + b.serviceName + " (" + b.customerName + ") - " + b.date + " " + b.time;
-    const body = "แจ้งเตือนคิวจองใหม่ The Bloom Studio\\n\\n" +
-      "รหัสการจอง: " + b.id + "\\n" +
-      "บริการ: " + b.serviceName + " (" + b.servicePrice + " บาท)\\n" +
-      "ช่างผู้ดูแล: " + b.staffName + "\\n" +
-      "วันและเวลานัด: " + b.date + " เวลา " + b.time + " น.\\n" +
-      "ลูกค้า: " + b.customerName + " โทร " + b.customerPhone + "\\n" +
-      "หมายเหตุ: " + (b.specialRequest || "-") + "\\n\\n" +
-      "ระบบได้บันทึกนัดหมายลง Google Calendar เรียบร้อยแล้ว";
-    MailApp.sendEmail(userEmail, subject, body);
-  } catch (mailErr) {
-    Logger.log("Mail error: " + mailErr.toString());
+  // 3. ส่งอีเมลแจ้งเตือนการจองใหม่ (New Booking Luxury HTML Email)
+  sendNewBookingEmail(b, ss);
+
+  // หากมีการแนบสลิปมาด้วยตั้งแต่ตอนจอง ให้ส่งอีเมลแจ้งสลิปด้วย
+  if (b.paymentSlipUrl) {
+    sendPaymentSlipEmail(b, ss);
   }
 
   // 4. อัปเดต Customers CRM
@@ -681,36 +1164,85 @@ function handleAddBooking(b) {
 
   return {
     success: true,
-    message: "บันทึกคิวจองลง Google Sheet, Calendar, และส่งเมลแจ้งเตือนสำเร็จ",
+    message: "บันทึกคิวจองลง Google Sheet, Calendar, และส่งอีเมลแจ้งเตือนสำเร็จ",
     calendarEventId: calendarEventId
   };
 }
 
 /**
- * อัปเดตสถานะการจองในชีต Bookings
+ * อัปเดตสถานะการจองในชีต Bookings พร้อมส่งอีเมลแจ้งเตือนเมื่อยกเลิกหรือแนบสลิป
  */
-function handleUpdateBookingStatus(bookingId, newStatus, updates) {
+function handleUpdateBookingStatus(bookingId, newStatus, updates, bookingData) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Bookings");
   if (!sheet) return { success: false, message: "Sheet Bookings not found" };
 
+  let targetBooking = bookingData || null;
+  let targetRowIndex = -1;
   const data = sheet.getDataRange().getDisplayValues();
+
   for (let i = 1; i < data.length; i++) {
     if (data[i][0] === bookingId) {
-      const rowIndex = i + 1;
-      if (newStatus) sheet.getRange(rowIndex, 3).setValue(newStatus);
-      if (updates && updates.paymentStatus) sheet.getRange(rowIndex, 14).setValue(updates.paymentStatus);
-      if (updates && updates.paymentSlipUrl) sheet.getRange(rowIndex, 15).setValue(updates.paymentSlipUrl);
-      return { success: true, message: "Updated booking " + bookingId };
+      targetRowIndex = i + 1;
+      if (!targetBooking) {
+        targetBooking = {
+          id: data[i][0],
+          createdAt: data[i][1],
+          status: newStatus || data[i][2],
+          date: data[i][3],
+          time: data[i][4],
+          serviceName: data[i][5],
+          servicePrice: data[i][6],
+          serviceDuration: data[i][7],
+          staffName: data[i][8],
+          customerName: data[i][9],
+          customerPhone: data[i][10],
+          customerEmail: data[i][11],
+          specialRequest: data[i][12],
+          paymentStatus: (updates && updates.paymentStatus) || data[i][13],
+          paymentSlipUrl: (updates && updates.paymentSlipUrl) || data[i][14],
+          calendarEventId: data[i][15]
+        };
+      }
+      break;
     }
   }
+
+  if (targetRowIndex > 0) {
+    if (newStatus) sheet.getRange(targetRowIndex, 3).setValue(newStatus);
+    if (updates && updates.paymentStatus) sheet.getRange(targetRowIndex, 14).setValue(updates.paymentStatus);
+    if (updates && updates.paymentSlipUrl) sheet.getRange(targetRowIndex, 15).setValue(updates.paymentSlipUrl);
+
+    // 1. หากสถานะเปลี่ยนเป็น Cancelled ให้ส่งอีเมลแจ้งเตือนการยกเลิกคิว
+    if (newStatus === "cancelled" && targetBooking) {
+      sendCancelledBookingEmail(targetBooking, ss);
+
+      // ลบหรืออัปเดต Event ใน Calendar
+      if (targetBooking.calendarEventId) {
+        try {
+          const cal = CalendarApp.getDefaultCalendar();
+          const ev = cal.getEventById(targetBooking.calendarEventId);
+          if (ev) ev.deleteEvent();
+        } catch (e) {}
+      }
+    }
+
+    // 2. หากมีการแนบสลิปโอนเงินใหม่ ให้ส่งอีเมลแจ้งเตือนสลิป
+    if (updates && updates.paymentSlipUrl && targetBooking) {
+      targetBooking.paymentSlipUrl = updates.paymentSlipUrl;
+      sendPaymentSlipEmail(targetBooking, ss);
+    }
+
+    return { success: true, message: "Updated booking " + bookingId };
+  }
+
   return { success: false, message: "Booking ID not found: " + bookingId };
 }
 
 /**
  * ลบรายการจองออกจากชีต Bookings และลบ Event ใน Google Calendar
  */
-function handleDeleteBooking(bookingId) {
+function handleDeleteBooking(bookingId, bookingData) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName("Bookings");
   if (!sheet) return { success: false, message: "Sheet Bookings not found" };
@@ -719,6 +1251,20 @@ function handleDeleteBooking(bookingId) {
   for (let i = 1; i < data.length; i++) {
     if (data[i][0] === bookingId) {
       const calendarEventId = data[i][15]; // Column P
+      const bData = bookingData || {
+        id: data[i][0],
+        status: "cancelled",
+        date: data[i][3],
+        time: data[i][4],
+        serviceName: data[i][5],
+        staffName: data[i][8],
+        customerName: data[i][9],
+        customerPhone: data[i][10]
+      };
+
+      // ส่งอีเมลแจ้งเตือนยกเลิก
+      sendCancelledBookingEmail(bData, ss);
+
       if (calendarEventId) {
         try {
           const cal = CalendarApp.getDefaultCalendar();
@@ -745,7 +1291,7 @@ function pushToWebApp() {
 
   if (settingsSheet) {
     const sData = settingsSheet.getDataRange().getDisplayValues();
-    const found = sData.find(r => r[0] === "ServerWebhookUrl");
+    const found = sData.find(function(r) { return r[0] === "ServerWebhookUrl"; });
     if (found && found[1]) webhookUrl = found[1].trim();
   }
 
@@ -788,7 +1334,7 @@ function openDriveFolder() {
   let folderUrl = "https://drive.google.com";
   if (settingsSheet) {
     const data = settingsSheet.getDataRange().getDisplayValues();
-    const row = data.find(r => r[0] === "GoogleDriveFolderUrl");
+    const row = data.find(function(r) { return r[0] === "GoogleDriveFolderUrl"; });
     if (row && row[1]) folderUrl = row[1];
   }
   const html = '<script>window.open("' + folderUrl + '", "_blank");google.script.host.close();</script>';
@@ -802,20 +1348,5 @@ function openCalendar() {
   const calendarUrl = "https://calendar.google.com";
   const html = '<script>window.open("' + calendarUrl + '", "_blank");google.script.host.close();</script>';
   SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(300).setHeight(100), "กำลังเปิด Google Calendar...");
-}
-
-/**
- * เมนู: ทดสอบส่งอีเมลแจ้งเตือน Admin
- */
-function testEmailNotification() {
-  const userEmail = Session.getActiveUser().getEmail();
-  if (!userEmail) {
-    SpreadsheetApp.getUi().alert("ไม่พบบัญชีอีเมลผู้ใช้งาน กรุณาลงชื่อเข้าใช้ Google");
-    return;
-  }
-  const subject = "🌸 [ทดสอบระบบ] The Bloom Studio - Google Workspace Notification";
-  const body = "สวัสดีคุณแอดมิน,\\n\\nนี่คือข้อความทดสอบการเชื่อมต่อระบบแจ้งเตือนผ่าน Google Apps Script (MailApp) ของ The Bloom Studio สำเร็จเรียบร้อยแล้ว!\\n\\nวันเวลา: " + new Date().toLocaleString("th-TH");
-  MailApp.sendEmail(userEmail, subject, body);
-  SpreadsheetApp.getUi().alert("ส่งอีเมลทดสอบไปยัง " + userEmail + " เรียบร้อยแล้ว!");
 }
 `;

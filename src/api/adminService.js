@@ -59,6 +59,29 @@ export const adminService = {
     return handleResponse(res);
   },
 
+  // Booking Conflicts & Leads Management
+  async getConflicts() {
+    const res = await fetch("/api/admin/conflicts");
+    const json = await handleResponse(res);
+    return json?.data || [];
+  },
+
+  async updateConflict(id, updates) {
+    const res = await fetch(`/api/admin/conflicts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates)
+    });
+    return handleResponse(res);
+  },
+
+  async deleteConflict(id) {
+    const res = await fetch(`/api/admin/conflicts/${id}`, {
+      method: "DELETE"
+    });
+    return handleResponse(res);
+  },
+
   // Services Management
   async createService(serviceData) {
     const res = await fetch("/api/admin/services", {
@@ -127,6 +150,15 @@ export const adminService = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: webAppUrl, webAppUrl })
+    });
+    return handleResponse(res);
+  },
+
+  async testEmail(webAppUrl, email = "") {
+    const res = await fetch("/api/admin/gas/test-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: webAppUrl, webAppUrl, email })
     });
     return handleResponse(res);
   },

@@ -186,6 +186,7 @@ function getInitialDatabase() {
         lineUserId: "U0987654321fedcba"
       }
     ],
+    bookingConflicts: [],
     settings: {
       adminPin: "1234",
       ownerEmail: "NatapongMumklang@gmail.com",
@@ -218,6 +219,7 @@ function loadDatabase() {
         staff: parsed.staff || [],
         bookings: parsed.bookings || [],
         customers: parsed.customers || [],
+        bookingConflicts: parsed.bookingConflicts || [],
         settings: {
           adminPin: "1234",
           ownerEmail: "NatapongMumklang@gmail.com",
@@ -424,9 +426,13 @@ function sanitizeDatabase(targetDb) {
       seenBookingIds.add(finalId);
       if (sig) seenSignatures.add(sig);
 
+      const rawCreatedAt = b.createdAt || b.CreatedAt || new Date().toISOString();
+      const rawCreatedAtMs = b.createdAtMs || b.CreatedAtMs || (rawCreatedAt ? new Date(rawCreatedAt).getTime() : Date.now());
+
       cleanBookings.push({
         id: finalId,
-        createdAt: b.createdAt || b.CreatedAt || new Date().toISOString(),
+        createdAt: rawCreatedAt,
+        createdAtMs: Number(rawCreatedAtMs) || Date.now(),
         status: b.status || b.Status || "pending",
         date,
         time,
@@ -489,6 +495,47 @@ function sanitizeDatabase(targetDb) {
     targetDb.customers = cleanCustomers;
   }
 
+  // 5. Booking Conflicts & Collision Leads
+  if (Array.isArray(targetDb.bookingConflicts)) {
+    const seenConflictIds = new Set();
+    const cleanConflicts = [];
+    targetDb.bookingConflicts.forEach((c) => {
+      if (!c) return;
+      const cId = c.id || `CONF-${Date.now().toString(36).toUpperCase()}-${cleanConflicts.length}`;
+      if (seenConflictIds.has(cId)) return;
+      seenConflictIds.add(cId);
+      cleanConflicts.push({
+        id: cId,
+        timestamp: c.timestamp || new Date().toISOString(),
+        timestampMs: Number(c.timestampMs) || Date.now(),
+        date: c.date || "",
+        time: c.time || "",
+        endTime: c.endTime || "",
+        serviceId: c.serviceId || "",
+        serviceName: c.serviceName || "",
+        servicePrice: parseFloat(c.servicePrice) || 0,
+        serviceDuration: parseInt(c.serviceDuration, 10) || 60,
+        staffId: c.staffId || "",
+        staffName: c.staffName || "",
+        customerName: c.customerName || "",
+        customerPhone: formatGasPhone(c.customerPhone),
+        customerEmail: c.customerEmail || "",
+        specialRequest: c.specialRequest || "",
+        lineUserId: c.lineUserId || "",
+        lineDisplayName: c.lineDisplayName || "",
+        conflictWithBookingId: c.conflictWithBookingId || "",
+        conflictWithCustomer: c.conflictWithCustomer || "",
+        conflictOccupiedTime: c.conflictOccupiedTime || "",
+        status: c.status || "pending_callback", // pending_callback | contacted | rebooked | resolved
+        adminNote: c.adminNote || "",
+        rebookedBookingId: c.rebookedBookingId || ""
+      });
+    });
+    targetDb.bookingConflicts = cleanConflicts;
+  } else {
+    targetDb.bookingConflicts = [];
+  }
+
   return targetDb;
 }
 
@@ -508,11 +555,157 @@ function saveDatabase() {
 // Initial DB load & sanitization
 loadDatabase();
 
-// Standard daily time slots
-const ALL_TIME_SLOTS = [
-  "10:00", "11:00", "12:00", "13:00", "14:00",
-  "15:00", "16:00", "17:00", "18:00", "19:00"
-];
+// Standard daily time slots & Operating Hours (10:00 - 20:30)
+const SHOP_OPERATING_HOURS = {
+  open: "10:00",
+  close: "20:30",
+  slotIntervalMinutes: 30, // Every 30 minutes
+  openMinutes: 10 * 60, // 600
+  closeMinutes: 20 * 60 + 30 // 1230
+};
+
+// Helper: Convert "HH:mm" to minutes from midnight
+function timeToMinutes(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") return 0;
+  const parts = timeStr.trim().split(":");
+  const hours = parseInt(parts[0], 10) || 0;
+  const minutes = parseInt(parts[1], 10) || 0;
+  return hours * 60 + minutes;
+}
+
+// Helper: Convert minutes from midnight to "HH:mm"
+function minutesToTime(minutes) {
+  const h = Math.floor(minutes / 60) % 24;
+  const m = minutes % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+// Generate base 30-minute time slots from 10:00 to 20:00
+function generateAllTimeSlots() {
+  const slots = [];
+  for (
+    let m = SHOP_OPERATING_HOURS.openMinutes;
+    m < SHOP_OPERATING_HOURS.closeMinutes;
+    m += SHOP_OPERATING_HOURS.slotIntervalMinutes
+  ) {
+    slots.push(minutesToTime(m));
+  }
+  return slots;
+}
+
+const ALL_TIME_SLOTS = generateAllTimeSlots();
+
+/**
+ * Calculate detailed available slots for a staff member on a specific date,
+ * taking service duration, shop operating hours (10:00 - 20:30), and existing bookings into account.
+ */
+function calculateAvailabilityEngine({ staffId, date, serviceId, duration }) {
+  // Determine service duration
+  let serviceDuration = parseInt(duration, 10);
+  if (!serviceDuration || isNaN(serviceDuration)) {
+    if (serviceId) {
+      const srv = db.services.find((s) => s.id === serviceId);
+      if (srv && srv.duration) {
+        serviceDuration = parseInt(srv.duration, 10);
+      }
+    }
+  }
+  if (!serviceDuration || serviceDuration <= 0) {
+    serviceDuration = 60; // Default 60 minutes
+  }
+
+  // Active bookings for this staff on this date
+  const existingBookings = (db.bookings || []).filter(
+    (b) => b.staffId === staffId && b.date === date && b.status !== "cancelled"
+  );
+
+  // Map existing bookings to minute ranges [startMin, endMin)
+  const busyIntervals = existingBookings.map((b) => {
+    const bStart = timeToMinutes(b.time);
+    let bDuration = parseInt(b.serviceDuration, 10);
+    if (!bDuration || isNaN(bDuration)) {
+      const srv = db.services.find((s) => s.id === b.serviceId);
+      bDuration = srv?.duration ? parseInt(srv.duration, 10) : 60;
+    }
+    const bEnd = bStart + bDuration;
+    return {
+      bookingId: b.id,
+      customerName: b.customerName,
+      serviceName: b.serviceName,
+      time: b.time,
+      startMin: bStart,
+      endMin: bEnd,
+      endTime: minutesToTime(bEnd),
+      duration: bDuration
+    };
+  });
+
+  const slotDetails = ALL_TIME_SLOTS.map((slotTime) => {
+    const slotStartMin = timeToMinutes(slotTime);
+    const slotEndMin = slotStartMin + serviceDuration;
+    const slotEndTime = minutesToTime(slotEndMin);
+
+    // Rule 1: Exceeds Closing Hours (20:30 = 1230)
+    if (slotEndMin > SHOP_OPERATING_HOURS.closeMinutes) {
+      return {
+        time: slotTime,
+        endTime: slotEndTime,
+        duration: serviceDuration,
+        available: false,
+        reason: "exceeds_closing",
+        reasonText: `เวลาสิ้นสุด (${slotEndTime} น.) เกินเวลาปิดร้าน (${SHOP_OPERATING_HOURS.close} น.)`
+      };
+    }
+
+    // Rule 2: Conflict with Existing Booking for this Staff
+    // Overlap condition: slotStartMin < busy.endMin && slotEndMin > busy.startMin
+    const conflict = busyIntervals.find(
+      (busy) => slotStartMin < busy.endMin && slotEndMin > busy.startMin
+    );
+
+    if (conflict) {
+      return {
+        time: slotTime,
+        endTime: slotEndTime,
+        duration: serviceDuration,
+        available: false,
+        reason: "conflict",
+        conflictWith: {
+          bookingId: conflict.bookingId,
+          time: conflict.time,
+          endTime: conflict.endTime,
+          serviceName: conflict.serviceName
+        },
+        reasonText: `ติดคิวบริการ (${conflict.time} - ${conflict.endTime} น.)`
+      };
+    }
+
+    return {
+      time: slotTime,
+      endTime: slotEndTime,
+      duration: serviceDuration,
+      available: true,
+      reason: null,
+      reasonText: "ว่างพร้อมให้บริการ"
+    };
+  });
+
+  const availableSlots = slotDetails.filter((s) => s.available).map((s) => s.time);
+  const bookedSlots = slotDetails.filter((s) => !s.available).map((s) => s.time);
+
+  return {
+    success: true,
+    staffId,
+    date,
+    serviceId: serviceId || null,
+    serviceDuration,
+    operatingHours: SHOP_OPERATING_HOURS,
+    allSlots: ALL_TIME_SLOTS,
+    availableSlots,
+    bookedSlots,
+    slotDetails
+  };
+}
 
 // Status tracking for real-time GAS sync
 let lastGasSync = {
@@ -521,6 +714,36 @@ let lastGasSync = {
   message: "ระบบเชื่อมต่อ Google Sheet อัตโนมัติพร้อมทำงาน",
   action: null
 };
+
+// ==========================================
+// Real-Time Server-Sent Events (SSE) Hub
+// ==========================================
+const sseClients = new Set();
+
+function broadcastSSE(eventType, data = {}) {
+  const payload = `data: ${JSON.stringify({
+    type: eventType,
+    data,
+    timestamp: Date.now(),
+    iso: new Date().toISOString()
+  })}\n\n`;
+
+  sseClients.forEach((client) => {
+    try {
+      client.res.write(payload);
+    } catch (err) {
+      sseClients.delete(client);
+    }
+  });
+}
+
+// Concurrency & Mutex Lock for Atomic First-Come First-Served Booking
+let bookingMutex = Promise.resolve();
+function withBookingLock(fn) {
+  const next = bookingMutex.then(fn, fn);
+  bookingMutex = next.catch(() => {});
+  return next;
+}
 
 // Concurrency & Cooldown Locks to prevent reading stale data after local mutations
 let lastPushTimestamp = 0;
@@ -569,7 +792,7 @@ async function syncBookingToGas(booking) {
 }
 
 // Helper: sync status change to Google Apps Script Web App
-async function syncStatusToGas(bookingId, status, updates = {}) {
+async function syncStatusToGas(bookingId, status, updates = {}, booking = null) {
   if (!db.settings.gasWebAppUrl) return;
   lastPushTimestamp = Date.now();
   try {
@@ -583,7 +806,8 @@ async function syncStatusToGas(bookingId, status, updates = {}) {
         action: "updateBookingStatus",
         bookingId,
         status,
-        updates
+        updates,
+        booking
       }),
       redirect: "follow"
     });
@@ -606,7 +830,7 @@ async function syncStatusToGas(bookingId, status, updates = {}) {
 }
 
 // Helper: sync delete booking to Google Apps Script Web App & Google Calendar
-async function syncDeleteToGas(bookingId) {
+async function syncDeleteToGas(bookingId, booking = null) {
   if (!db.settings.gasWebAppUrl) return;
   lastPushTimestamp = Date.now();
   try {
@@ -618,7 +842,8 @@ async function syncDeleteToGas(bookingId) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "deleteBooking",
-        bookingId
+        bookingId,
+        booking
       }),
       redirect: "follow"
     });
@@ -896,7 +1121,44 @@ async function startServer() {
     res.json({
       status: "ok",
       app: "The Bloom Studio Booking Server",
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      timestampMs: Date.now()
+    });
+  });
+
+  // Real-Time Server-Sent Events (SSE) stream for instant slot invalidation & live admin alerts
+  app.get("/api/events", (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    const client = { id: `client-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, res };
+    sseClients.add(client);
+
+    // Initial connection ack with millisecond timestamp
+    res.write(
+      `data: ${JSON.stringify({
+        type: "connected",
+        clientId: client.id,
+        timestamp: Date.now(),
+        iso: new Date().toISOString()
+      })}\n\n`
+    );
+
+    // Keep-alive heartbeat every 20 seconds
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(`: heartbeat\n\n`);
+      } catch (e) {
+        clearInterval(heartbeat);
+      }
+    }, 20000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      sseClients.delete(client);
     });
   });
 
@@ -930,10 +1192,10 @@ async function startServer() {
     });
   });
 
-  // 3. GET /api/availability?staffId=&date=
+  // 3. GET /api/availability?staffId=&date=&serviceId=&duration=
   app.get("/api/availability", (req, res) => {
     loadDatabase();
-    const { staffId, date } = req.query;
+    const { staffId, date, serviceId, duration } = req.query;
 
     if (!staffId || !date) {
       return res.status(400).json({
@@ -942,152 +1204,297 @@ async function startServer() {
       });
     }
 
-    const bookedTimes = db.bookings
-      .filter((b) => b.staffId === staffId && b.date === date && b.status !== "cancelled")
-      .map((b) => b.time);
-
-    const availableSlots = ALL_TIME_SLOTS.filter((slot) => !bookedTimes.includes(slot));
-
-    res.json({
-      success: true,
+    const availabilityResult = calculateAvailabilityEngine({
       staffId,
       date,
-      allSlots: ALL_TIME_SLOTS,
-      bookedSlots: bookedTimes,
-      availableSlots
+      serviceId,
+      duration
     });
+
+    res.json(availabilityResult);
   });
 
-  // 4. POST /api/bookings
+  // 4. POST /api/bookings (Atomic First-Come, First-Served Concurrency Control)
   app.post("/api/bookings", async (req, res) => {
-    loadDatabase();
-    const {
-      serviceId,
-      staffId,
-      date,
-      time,
-      customerName,
-      customerPhone,
-      customerEmail,
-      specialRequest,
-      paymentSlipUrl,
-      lineUserId,
-      lineDisplayName
-    } = req.body;
+    // Record exact arrival millisecond timestamp
+    const requestArrivedAtMs = Date.now();
+    const requestArrivedAtIso = new Date(requestArrivedAtMs).toISOString();
 
-    if (!serviceId || !staffId || !date || !time || !customerName || !customerPhone) {
-      return res.status(400).json({
-        success: false,
-        message: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน (บริการ, ช่าง, วัน, เวลา, ชื่อ-นามสกุล, เบอร์โทรศัพท์)"
+    return withBookingLock(async () => {
+      loadDatabase();
+      const {
+        serviceId,
+        staffId,
+        date,
+        time,
+        customerName,
+        customerPhone,
+        customerEmail,
+        specialRequest,
+        paymentSlipUrl,
+        lineUserId,
+        lineDisplayName
+      } = req.body;
+
+      if (!serviceId || !staffId || !date || !time || !customerName || !customerPhone) {
+        return res.status(400).json({
+          success: false,
+          message: "กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน (บริการ, ช่าง, วัน, เวลา, ชื่อ-นามสกุล, เบอร์โทรศัพท์)"
+        });
+      }
+
+      // LINE Login is optional: Save lineUserId if available, otherwise proceed seamlessly
+      const finalLineUserId = lineUserId && String(lineUserId).trim() ? String(lineUserId).trim() : null;
+      const finalLineDisplayName = lineDisplayName && String(lineDisplayName).trim() ? String(lineDisplayName).trim() : customerName.trim();
+
+      const selectedService = db.services.find((s) => s.id === serviceId);
+      if (!selectedService) {
+        return res.status(404).json({
+          success: false,
+          message: "ไม่พบบริการที่เลือก"
+        });
+      }
+
+      const selectedStaff = db.staff.find((st) => st.id === staffId);
+      if (!selectedStaff) {
+        return res.status(404).json({
+          success: false,
+          message: "ไม่พบช่างที่เลือก"
+        });
+      }
+
+      if (selectedStaff.skills && !selectedStaff.skills.includes(serviceId)) {
+        return res.status(400).json({
+          success: false,
+          message: `ช่าง ${selectedStaff.name} ไม่รองรับบริการ ${selectedService.name}`
+        });
+      }
+
+      // Duration-Based Availability & Concurrency Conflict Check
+      const newStartMin = timeToMinutes(time);
+      const serviceDuration = parseInt(selectedService.duration, 10) || 60;
+      const newEndMin = newStartMin + serviceDuration;
+      const newEndTimeStr = minutesToTime(newEndMin);
+
+      // Rule 1: Check against store closing hours (20:30)
+      if (newEndMin > SHOP_OPERATING_HOURS.closeMinutes) {
+        return res.status(400).json({
+          success: false,
+          message: `ขออภัย เวลาสิ้นสุดบริการ (${newEndTimeStr} น.) เกินเวลาปิดทำการของร้าน (ปิด ${SHOP_OPERATING_HOURS.close} น.) กรุณาเลือกช่วงเวลาอื่น`
+        });
+      }
+
+      // Rule 2: Strict First-Come, First-Served Conflict Check within Atomic Mutex
+      const conflictingBooking = db.bookings.find((b) => {
+        if (b.staffId !== staffId || b.date !== date || b.status === "cancelled") return false;
+        const bStart = timeToMinutes(b.time);
+        let bDur = parseInt(b.serviceDuration, 10);
+        if (!bDur || isNaN(bDur)) {
+          const srv = db.services.find((s) => s.id === b.serviceId);
+          bDur = srv?.duration ? parseInt(srv.duration, 10) : 60;
+        }
+        const bEnd = bStart + bDur;
+        // Overlap condition
+        return newStartMin < bEnd && newEndMin > bStart;
       });
-    }
 
-    // LINE Login is optional: Save lineUserId if available, otherwise proceed seamlessly
-    const finalLineUserId = lineUserId && String(lineUserId).trim() ? String(lineUserId).trim() : null;
-    const finalLineDisplayName = lineDisplayName && String(lineDisplayName).trim() ? String(lineDisplayName).trim() : customerName.trim();
+      if (conflictingBooking) {
+        const bStart = conflictingBooking.time;
+        let bDur = parseInt(conflictingBooking.serviceDuration, 10);
+        if (!bDur || isNaN(bDur)) {
+          const srv = db.services.find((s) => s.id === conflictingBooking.serviceId);
+          bDur = srv?.duration ? parseInt(srv.duration, 10) : 60;
+        }
+        const bEnd = minutesToTime(timeToMinutes(bStart) + bDur);
 
-    const selectedService = db.services.find((s) => s.id === serviceId);
-    if (!selectedService) {
-      return res.status(404).json({
-        success: false,
-        message: "ไม่พบบริการที่เลือก"
-      });
-    }
+        // 1. Calculate alternative available slots for the selected specialist on this date
+        const currentStaffAvailability = calculateAvailabilityEngine({
+          staffId,
+          date,
+          serviceId,
+          duration: serviceDuration
+        });
+        const alternateSlots = currentStaffAvailability.availableSlots || [];
 
-    const selectedStaff = db.staff.find((st) => st.id === staffId);
-    if (!selectedStaff) {
-      return res.status(404).json({
-        success: false,
-        message: "ไม่พบช่างที่เลือก"
-      });
-    }
+        // 2. Find other eligible specialists with open slots on this date
+        const eligibleOtherStaff = (db.staff || []).filter(
+          (st) => st.id !== staffId && Array.isArray(st.skills) && st.skills.includes(serviceId)
+        );
+        const alternateStaff = eligibleOtherStaff
+          .map((st) => {
+            const stAvail = calculateAvailabilityEngine({
+              staffId: st.id,
+              date,
+              serviceId,
+              duration: serviceDuration
+            });
+            return {
+              staffId: st.id,
+              staffName: st.name,
+              nickname: st.nickname || st.name,
+              staffAvatar: st.avatar || "",
+              role: st.role || "",
+              rating: st.rating || 5.0,
+              hasRequestedSlot: stAvail.availableSlots.includes(time),
+              availableSlots: stAvail.availableSlots || []
+            };
+          })
+          .filter((st) => st.availableSlots.length > 0);
 
-    if (selectedStaff.skills && !selectedStaff.skills.includes(serviceId)) {
-      return res.status(400).json({
-        success: false,
-        message: `ช่าง ${selectedStaff.name} ไม่รองรับบริการ ${selectedService.name}`
-      });
-    }
+        // 3. Log conflict attempt in DB for Admin lead follow-up
+        const conflictId = `CONF-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+        const cleanPhone = customerPhone.trim();
+        const conflictLog = {
+          id: conflictId,
+          timestamp: requestArrivedAtIso,
+          timestampMs: requestArrivedAtMs,
+          date,
+          time,
+          endTime: newEndTimeStr,
+          serviceId,
+          serviceName: selectedService.name,
+          servicePrice: parseFloat(selectedService.price) || 0,
+          serviceDuration,
+          staffId,
+          staffName: selectedStaff.name,
+          customerName: customerName.trim(),
+          customerPhone: cleanPhone,
+          customerEmail: customerEmail ? customerEmail.trim() : "",
+          specialRequest: specialRequest ? specialRequest.trim() : "",
+          lineUserId: finalLineUserId || "",
+          lineDisplayName: finalLineDisplayName || "",
+          conflictWithBookingId: conflictingBooking.id,
+          conflictWithCustomer: conflictingBooking.customerName || "ลูกค้าท่านอื่น",
+          conflictOccupiedTime: `${bStart} - ${bEnd} น.`,
+          status: "pending_callback", // pending_callback | contacted | rebooked | resolved
+          adminNote: "",
+          rebookedBookingId: ""
+        };
 
-    // Double-booking check
-    const isConflict = db.bookings.some(
-      (b) =>
-        b.staffId === staffId &&
-        b.date === date &&
-        b.time === time &&
-        b.status !== "cancelled"
-    );
+        if (!Array.isArray(db.bookingConflicts)) {
+          db.bookingConflicts = [];
+        }
+        db.bookingConflicts.unshift(conflictLog);
+        saveDatabase();
 
-    if (isConflict) {
-      return res.status(409).json({
-        success: false,
-        message: `ขออภัย ช่วงเวลา ${time} วันที่ ${date} ของ ${selectedStaff.name} มีการจองแล้ว กรุณาเลือกช่วงเวลาอื่น`
-      });
-    }
+        // 4. Real-time broadcast conflict alert to Admin
+        broadcastSSE("booking:conflict_logged", {
+          conflict: conflictLog
+        });
 
-    const id = `BK-${Date.now().toString(36).toUpperCase()}-${Math.random()
-      .toString(36)
-      .substring(2, 6)
-      .toUpperCase()}`;
-    const createdAt = new Date().toISOString();
+        // 5. Immediate 409 Conflict return with alternate slots to allow instant customer reselection
+        return res.status(409).json({
+          success: false,
+          conflict: true,
+          message: "ขออภัย ช่วงเวลานี้เพิ่งถูกจองไปแล้ว กรุณาเลือกช่วงเวลาหรือช่างท่านอื่น",
+          conflictDetails: {
+            staffName: selectedStaff.name,
+            occupiedTime: `${bStart} - ${bEnd} น.`,
+            requestedTime: `${time} - ${newEndTimeStr} น.`,
+            conflictId: conflictLog.id
+          },
+          alternateSlots,
+          alternateStaff
+        });
+      }
 
-    const newBooking = {
-      id,
-      serviceId,
-      serviceName: selectedService.name,
-      serviceDuration: selectedService.duration || 60,
-      servicePrice: selectedService.price || 0,
-      staffId,
-      staffName: selectedStaff.name,
-      staffAvatar: selectedStaff.avatar || "",
-      date,
-      time,
-      customerName: customerName.trim(),
-      customerPhone: customerPhone.trim(),
-      customerEmail: customerEmail ? customerEmail.trim() : "",
-      specialRequest: specialRequest ? specialRequest.trim() : "",
-      paymentStatus: paymentSlipUrl ? "paid" : "pending",
-      paymentSlipUrl: paymentSlipUrl || "",
-      calendarEventId: "",
-      lineUserId: finalLineUserId,
-      lineDisplayName: finalLineDisplayName,
-      createdAt,
-      status: "pending"
-    };
+      const id = `BK-${Date.now().toString(36).toUpperCase()}-${Math.random()
+        .toString(36)
+        .substring(2, 6)
+        .toUpperCase()}`;
 
-    db.bookings.unshift(newBooking);
-
-    // Update Customers CRM table in database
-    const cleanPhone = customerPhone.trim();
-    const existingCustomerIndex = db.customers.findIndex((c) => c.customerPhone === cleanPhone);
-    if (existingCustomerIndex >= 0) {
-      const c = db.customers[existingCustomerIndex];
-      c.totalBookings = (c.totalBookings || 0) + 1;
-      c.totalSpent = (c.totalSpent || 0) + (selectedService.price || 0);
-      c.lastVisitDate = date;
-      if (finalLineUserId) c.lineUserId = finalLineUserId;
-      if (customerEmail) c.customerEmail = customerEmail.trim();
-    } else {
-      db.customers.push({
-        customerPhone: cleanPhone,
+      const newBooking = {
+        id,
+        serviceId,
+        serviceName: selectedService.name,
+        serviceDuration: selectedService.duration || 60,
+        servicePrice: selectedService.price || 0,
+        staffId,
+        staffName: selectedStaff.name,
+        staffAvatar: selectedStaff.avatar || "",
+        date,
+        time,
+        endTime: newEndTimeStr,
         customerName: customerName.trim(),
+        customerPhone: customerPhone.trim(),
         customerEmail: customerEmail ? customerEmail.trim() : "",
-        totalBookings: 1,
-        totalSpent: selectedService.price || 0,
-        lastVisitDate: date,
-        lineUserId: finalLineUserId || ""
+        specialRequest: specialRequest ? specialRequest.trim() : "",
+        paymentStatus: paymentSlipUrl ? "paid" : "pending",
+        paymentSlipUrl: paymentSlipUrl || "",
+        calendarEventId: "",
+        lineUserId: finalLineUserId,
+        lineDisplayName: finalLineDisplayName,
+        createdAt: requestArrivedAtIso,
+        createdAtMs: requestArrivedAtMs,
+        status: "pending"
+      };
+
+      db.bookings.unshift(newBooking);
+
+      // Auto-resolve any pending conflict leads for this customer phone/line
+      if (Array.isArray(db.bookingConflicts)) {
+        db.bookingConflicts.forEach((conf) => {
+          if (
+            conf.status === "pending_callback" &&
+            (conf.customerPhone === customerPhone.trim() || (finalLineUserId && conf.lineUserId === finalLineUserId))
+          ) {
+            conf.status = "rebooked";
+            conf.rebookedBookingId = newBooking.id;
+            conf.adminNote = (conf.adminNote ? conf.adminNote + " | " : "") + `ลูกค้าจองรอบใหม่สำเร็จ (${newBooking.date} ${newBooking.time} น.)`;
+          }
+        });
+      }
+
+      // Update Customers CRM table in database
+      const cleanPhone = customerPhone.trim();
+      const existingCustomerIndex = db.customers.findIndex((c) => c.customerPhone === cleanPhone);
+      if (existingCustomerIndex >= 0) {
+        const c = db.customers[existingCustomerIndex];
+        c.totalBookings = (c.totalBookings || 0) + 1;
+        c.totalSpent = (c.totalSpent || 0) + (selectedService.price || 0);
+        c.lastVisitDate = date;
+        if (finalLineUserId) c.lineUserId = finalLineUserId;
+        if (customerEmail) c.customerEmail = customerEmail.trim();
+      } else {
+        db.customers.push({
+          customerPhone: cleanPhone,
+          customerName: customerName.trim(),
+          customerEmail: customerEmail ? customerEmail.trim() : "",
+          totalBookings: 1,
+          totalSpent: selectedService.price || 0,
+          lastVisitDate: date,
+          lineUserId: finalLineUserId || ""
+        });
+      }
+
+      saveDatabase();
+
+      // Real-Time Live Slot Invalidation Broadcast to all connected clients via SSE
+      broadcastSSE("booking:created", {
+        booking: newBooking,
+        staffId,
+        date,
+        time,
+        endTime: newEndTimeStr,
+        serviceDuration
       });
-    }
+      broadcastSSE("slot:invalidated", {
+        staffId,
+        date,
+        time,
+        endTime: newEndTimeStr
+      });
 
-    saveDatabase();
+      // Sync to Google Apps Script (Adds to sheet, Calendar, Email - no duplicate pushAll)
+      syncBookingToGas(newBooking).catch((err) => {
+        console.warn("[GAS Sync Async] Error:", err.message);
+      });
 
-    // Sync to Google Apps Script (Adds to sheet, Calendar, Email - no duplicate pushAll)
-    await syncBookingToGas(newBooking);
-
-    return res.status(201).json({
-      success: true,
-      message: "จองคิวสำเร็จเรียบร้อยแล้ว",
-      booking: newBooking
+      return res.status(201).json({
+        success: true,
+        message: "จองคิวสำเร็จเรียบร้อยแล้ว",
+        booking: newBooking
+      });
     });
   });
 
@@ -1210,7 +1617,54 @@ async function startServer() {
       staff: db.staff || [],
       bookings: db.bookings || [],
       customers: db.customers || [],
+      bookingConflicts: db.bookingConflicts || [],
       settings: db.settings || {}
+    });
+  });
+
+  // Get Conflict Logs for Admin
+  app.get("/api/admin/conflicts", (req, res) => {
+    loadDatabase();
+    res.json({
+      success: true,
+      data: db.bookingConflicts || []
+    });
+  });
+
+  // Update Conflict Log (Status or Admin Note)
+  app.patch("/api/admin/conflicts/:id", (req, res) => {
+    loadDatabase();
+    const { id } = req.params;
+    const { status, adminNote } = req.body;
+    const conflict = (db.bookingConflicts || []).find((c) => c.id === id);
+    if (!conflict) {
+      return res.status(404).json({ success: false, message: "ไม่พบบันทึกคิวซ้อนนี้" });
+    }
+    if (status !== undefined) conflict.status = status;
+    if (adminNote !== undefined) conflict.adminNote = adminNote;
+    saveDatabase();
+    broadcastSSE("booking:conflict_updated", { conflict });
+    res.json({
+      success: true,
+      message: "อัปเดตข้อมูลบันทึกคิวซ้อนเรียบร้อย",
+      data: conflict
+    });
+  });
+
+  // Delete Conflict Log
+  app.delete("/api/admin/conflicts/:id", (req, res) => {
+    loadDatabase();
+    const { id } = req.params;
+    const initialLen = (db.bookingConflicts || []).length;
+    db.bookingConflicts = (db.bookingConflicts || []).filter((c) => c.id !== id);
+    if (db.bookingConflicts.length === initialLen) {
+      return res.status(404).json({ success: false, message: "ไม่พบบันทึกคิวซ้อนนี้" });
+    }
+    saveDatabase();
+    broadcastSSE("booking:conflict_deleted", { id });
+    res.json({
+      success: true,
+      message: "ลบบันทึกคิวซ้อนเรียบร้อย"
     });
   });
 
@@ -1244,88 +1698,117 @@ async function startServer() {
 
   // Admin Create Manual Booking
   app.post("/api/admin/bookings", async (req, res) => {
-    loadDatabase();
-    const {
-      serviceId,
-      staffId,
-      date,
-      time,
-      customerName,
-      customerPhone,
-      customerEmail,
-      specialRequest,
-      status,
-      paymentStatus,
-      paymentSlipUrl
-    } = req.body;
+    const requestArrivedAtMs = Date.now();
+    const requestArrivedAtIso = new Date(requestArrivedAtMs).toISOString();
 
-    if (!serviceId || !staffId || !date || !time || !customerName || !customerPhone) {
-      return res.status(400).json({
-        success: false,
-        message: "กรุณาระบุข้อมูลที่จำเป็น (บริการ, ช่าง, วัน, เวลา, ชื่อลูกค้า, เบอร์โทร)"
-      });
-    }
+    return withBookingLock(async () => {
+      loadDatabase();
+      const {
+        serviceId,
+        staffId,
+        date,
+        time,
+        customerName,
+        customerPhone,
+        customerEmail,
+        specialRequest,
+        status,
+        paymentStatus,
+        paymentSlipUrl
+      } = req.body;
 
-    const selectedService = db.services.find((s) => s.id === serviceId);
-    const selectedStaff = db.staff.find((st) => st.id === staffId);
+      if (!serviceId || !staffId || !date || !time || !customerName || !customerPhone) {
+        return res.status(400).json({
+          success: false,
+          message: "กรุณาระบุข้อมูลที่จำเป็น (บริการ, ช่าง, วัน, เวลา, ชื่อลูกค้า, เบอร์โทร)"
+        });
+      }
 
-    const id = `BK-ADMIN-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    const createdAt = new Date().toISOString();
+      const selectedService = db.services.find((s) => s.id === serviceId);
+      const selectedStaff = db.staff.find((st) => st.id === staffId);
+      const serviceDuration = selectedService ? (parseInt(selectedService.duration, 10) || 60) : 60;
+      const startMin = timeToMinutes(time);
+      const endMin = startMin + serviceDuration;
+      const endTimeStr = minutesToTime(endMin);
 
-    const newBooking = {
-      id,
-      serviceId,
-      serviceName: selectedService ? selectedService.name : "บริการความงาม",
-      serviceDuration: selectedService ? selectedService.duration : 60,
-      servicePrice: selectedService ? selectedService.price : 0,
-      staffId,
-      staffName: selectedStaff ? selectedStaff.name : "ช่างผู้เชี่ยวชาญ",
-      staffAvatar: selectedStaff ? (selectedStaff.avatar || "") : "",
-      date,
-      time,
-      customerName: customerName.trim(),
-      customerPhone: customerPhone.trim(),
-      customerEmail: customerEmail ? customerEmail.trim() : "",
-      specialRequest: specialRequest ? specialRequest.trim() : "",
-      paymentStatus: paymentStatus || (paymentSlipUrl ? "paid" : "pending"),
-      paymentSlipUrl: paymentSlipUrl || "",
-      calendarEventId: "",
-      lineUserId: null,
-      lineDisplayName: null,
-      createdAt,
-      status: status || "confirmed"
-    };
+      const id = `BK-ADMIN-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-    db.bookings.unshift(newBooking);
-
-    // Update Customer CRM
-    const cleanPhone = customerPhone.trim();
-    const existingCustomerIndex = db.customers.findIndex((c) => c.customerPhone === cleanPhone);
-    if (existingCustomerIndex >= 0) {
-      const c = db.customers[existingCustomerIndex];
-      c.totalBookings = (c.totalBookings || 0) + 1;
-      c.totalSpent = (c.totalSpent || 0) + (selectedService ? selectedService.price : 0);
-      c.lastVisitDate = date;
-      if (customerEmail) c.customerEmail = customerEmail.trim();
-    } else {
-      db.customers.push({
-        customerPhone: cleanPhone,
+      const newBooking = {
+        id,
+        serviceId,
+        serviceName: selectedService ? selectedService.name : "บริการความงาม",
+        serviceDuration,
+        servicePrice: selectedService ? selectedService.price : 0,
+        staffId,
+        staffName: selectedStaff ? selectedStaff.name : "ช่างผู้เชี่ยวชาญ",
+        staffAvatar: selectedStaff ? (selectedStaff.avatar || "") : "",
+        date,
+        time,
+        endTime: endTimeStr,
         customerName: customerName.trim(),
+        customerPhone: customerPhone.trim(),
         customerEmail: customerEmail ? customerEmail.trim() : "",
-        totalBookings: 1,
-        totalSpent: selectedService ? selectedService.price : 0,
-        lastVisitDate: date,
-        lineUserId: ""
+        specialRequest: specialRequest ? specialRequest.trim() : "",
+        paymentStatus: paymentStatus || (paymentSlipUrl ? "paid" : "pending"),
+        paymentSlipUrl: paymentSlipUrl || "",
+        calendarEventId: "",
+        lineUserId: null,
+        lineDisplayName: null,
+        createdAt: requestArrivedAtIso,
+        createdAtMs: requestArrivedAtMs,
+        status: status || "confirmed"
+      };
+
+      db.bookings.unshift(newBooking);
+
+      // Update Customer CRM
+      const cleanPhone = customerPhone.trim();
+      const existingCustomerIndex = db.customers.findIndex((c) => c.customerPhone === cleanPhone);
+      if (existingCustomerIndex >= 0) {
+        const c = db.customers[existingCustomerIndex];
+        c.totalBookings = (c.totalBookings || 0) + 1;
+        c.totalSpent = (c.totalSpent || 0) + (selectedService ? selectedService.price : 0);
+        c.lastVisitDate = date;
+        if (customerEmail) c.customerEmail = customerEmail.trim();
+      } else {
+        db.customers.push({
+          customerPhone: cleanPhone,
+          customerName: customerName.trim(),
+          customerEmail: customerEmail ? customerEmail.trim() : "",
+          totalBookings: 1,
+          totalSpent: selectedService ? selectedService.price : 0,
+          lastVisitDate: date,
+          lineUserId: ""
+        });
+      }
+
+      saveDatabase();
+
+      // Real-Time Broadcast to all clients
+      broadcastSSE("booking:created", {
+        booking: newBooking,
+        staffId,
+        date,
+        time,
+        endTime: endTimeStr,
+        serviceDuration
       });
-    }
+      broadcastSSE("slot:invalidated", {
+        staffId,
+        date,
+        time,
+        endTime: endTimeStr
+      });
 
-    saveDatabase();
-    await syncBookingToGas(newBooking);
+      syncBookingToGas(newBooking).catch((err) => {
+        console.warn("[Admin GAS Sync Async] Error:", err.message);
+      });
 
-    res.status(201).json({
-      success: true,
-      message: "สร้างรายการจองโดยแอดมินสำเร็จ",
-      booking: newBooking
+      res.status(201).json({
+        success: true,
+        message: "สร้างรายการจองโดยแอดมินสำเร็จ",
+        booking: newBooking
+      });
     });
   });
 
@@ -1346,8 +1829,18 @@ async function startServer() {
 
     saveDatabase();
 
-    if (status) {
-      await syncStatusToGas(id, status);
+    // Broadcast SSE update
+    broadcastSSE("booking:updated", {
+      bookingId: id,
+      status: booking.status,
+      paymentStatus: booking.paymentStatus,
+      staffId: booking.staffId,
+      date: booking.date,
+      time: booking.time
+    });
+
+    if (status || paymentSlipUrl !== undefined || paymentStatus) {
+      await syncStatusToGas(id, status, { paymentStatus: booking.paymentStatus, paymentSlipUrl: booking.paymentSlipUrl }, booking);
     }
     await autoSyncToGas();
 
@@ -1363,6 +1856,7 @@ async function startServer() {
     loadDatabase();
     const { id } = req.params;
     const initialLen = db.bookings.length;
+    const targetBooking = db.bookings.find((b) => b.id === id);
     db.bookings = db.bookings.filter((b) => b.id !== id);
 
     if (db.bookings.length === initialLen) {
@@ -1370,7 +1864,16 @@ async function startServer() {
     }
 
     saveDatabase();
-    await syncDeleteToGas(id);
+
+    // Broadcast SSE deletion to free up slots immediately
+    broadcastSSE("booking:deleted", {
+      bookingId: id,
+      staffId: targetBooking?.staffId,
+      date: targetBooking?.date,
+      time: targetBooking?.time
+    });
+
+    await syncDeleteToGas(id, targetBooking);
     await autoSyncToGas();
     res.json({
       success: true,
@@ -1723,6 +2226,61 @@ async function startServer() {
       return res.status(500).json({
         success: false,
         message: "เกิดข้อผิดพลาดในการดึงข้อมูล: " + err.message
+      });
+    }
+  });
+
+  // Test Sending Luxury HTML Notification Email to Admin
+  app.post("/api/admin/gas/test-email", async (req, res) => {
+    loadDatabase();
+    const url = getGasUrl(req);
+    const { email } = req.body;
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        message: "กรุณาระบุ Google Apps Script Web App URL ก่อนทดสอบส่งอีเมล"
+      });
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "testEmail",
+          email: email || db.settings.ownerEmail || ""
+        }),
+        redirect: "follow"
+      });
+
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        return res.status(500).json({
+          success: false,
+          message: "ไม่สามารถแปลงข้อมูลการตอบกลับจาก Google Apps Script: " + text.slice(0, 150)
+        });
+      }
+
+      if (data && data.success) {
+        return res.json({
+          success: true,
+          message: data.message || `ส่งอีเมลแจ้งเตือนทดสอบดีไซน์หรูหราไปยัง ${data.adminEmail || "Admin"} สำเร็จ!`,
+          details: data
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: data.message || data.error || "ไม่สามารถส่งอีเมลทดสอบได้",
+          details: data
+        });
+      }
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: "เกิดข้อผิดพลาดในการเชื่อมต่อส่งอีเมล: " + err.message
       });
     }
   });

@@ -1,6 +1,7 @@
 import React from "react";
 import {
   CalendarDays,
+  Calendar as CalendarIcon,
   Sparkles,
   Users,
   UserCheck,
@@ -27,6 +28,13 @@ export default function AdminNavbar({
       shortLabel: "คิวจอง",
       icon: CalendarDays,
       badge: counts.bookings
+    },
+    {
+      id: "calendar",
+      label: "ปฏิทินคิวงาน",
+      shortLabel: "ปฏิทิน",
+      icon: CalendarIcon,
+      badge: null
     },
     {
       id: "services",

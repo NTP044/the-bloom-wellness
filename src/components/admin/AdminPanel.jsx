@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import AdminNavbar from "./AdminNavbar";
 import AdminBookingsTab from "./AdminBookingsTab";
+import AdminCalendarTab from "./AdminCalendarTab";
 import AdminServicesTab from "./AdminServicesTab";
 import AdminStaffTab from "./AdminStaffTab";
 import AdminCustomersTab from "./AdminCustomersTab";
@@ -9,11 +10,13 @@ import { adminService } from "../../api/adminService";
 
 export default function AdminPanel({ onExitAdmin, onLogout }) {
   const [activeTab, setActiveTab] = useState("bookings");
+  const [calendarTargetDate, setCalendarTargetDate] = useState(null);
   const [dbData, setDbData] = useState({
     services: [],
     staff: [],
     bookings: [],
     customers: [],
+    bookingConflicts: [],
     settings: {}
   });
   const [loading, setLoading] = useState(true);
@@ -23,6 +26,13 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
   const showToast = (message, type = "success") => {
     setToastMessage({ message, type });
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleSwitchToCalendar = (targetDate = null) => {
+    setActiveTab("calendar");
+    if (targetDate) {
+      setCalendarTargetDate(targetDate);
+    }
   };
 
   const fetchDatabase = useCallback(async (isSilent = false) => {
@@ -36,6 +46,7 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
           staff: Array.isArray(actual.staff) ? actual.staff : (Array.isArray(data.staff) ? data.staff : []),
           bookings: Array.isArray(actual.bookings) ? actual.bookings : (Array.isArray(data.bookings) ? data.bookings : []),
           customers: Array.isArray(actual.customers) ? actual.customers : (Array.isArray(data.customers) ? data.customers : []),
+          bookingConflicts: Array.isArray(actual.bookingConflicts) ? actual.bookingConflicts : (Array.isArray(data.bookingConflicts) ? data.bookingConflicts : []),
           settings: (actual.settings && typeof actual.settings === 'object') ? actual.settings : (data.settings || {})
         };
         setDbData(normalized);
@@ -54,6 +65,74 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
     fetchDatabase();
   }, [fetchDatabase]);
 
+  // Real-Time SSE Listener for Instant Admin Updates (Bookings, Calendar & Conflicts)
+  useEffect(() => {
+    let eventSource = null;
+    try {
+      eventSource = new EventSource("/api/events");
+
+      eventSource.onmessage = (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload.type === "booking:created" && payload.booking) {
+            const newBooking = payload.booking;
+            setDbData((prev) => {
+              const currentList = Array.isArray(prev.bookings) ? prev.bookings : [];
+              const exists = currentList.some((b) => b.id === newBooking.id);
+              if (exists) {
+                return {
+                  ...prev,
+                  bookings: currentList.map((b) => (b.id === newBooking.id ? newBooking : b))
+                };
+              }
+              return {
+                ...prev,
+                bookings: [newBooking, ...currentList]
+              };
+            });
+            showToast(`⚡ มีคิวจองใหม่เข้ามา: คุณ${newBooking.customerName || ""} (${newBooking.date} ${newBooking.time} น.)`, "success");
+            fetchDatabase(true);
+          } else if (payload.type === "booking:conflict_logged" && payload.conflict) {
+            const newConflict = payload.conflict;
+            setDbData((prev) => ({
+              ...prev,
+              bookingConflicts: [
+                newConflict,
+                ...(prev.bookingConflicts || []).filter((c) => c.id !== newConflict.id)
+              ]
+            }));
+            showToast(`⚠️ มีคิวจองชนกัน: คุณ${newConflict.customerName || ""} (${newConflict.date} ${newConflict.time} น.)`, "warning");
+            fetchDatabase(true);
+          } else if (
+            payload.type === "booking:updated" ||
+            payload.type === "booking:status_updated" ||
+            payload.type === "booking:deleted" ||
+            payload.type === "booking:conflict_updated" ||
+            payload.type === "booking:conflict_deleted" ||
+            payload.type === "data:synced" ||
+            payload.type === "google_sync:success"
+          ) {
+            fetchDatabase(true);
+          }
+        } catch (err) {
+          console.warn("[Admin SSE] Parse error:", err);
+        }
+      };
+
+      eventSource.onerror = () => {
+        // SSE natively auto-reconnects
+      };
+    } catch (err) {
+      console.warn("[Admin SSE] Setup error:", err);
+    }
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
+  }, [fetchDatabase]);
+
   // Window Focus & Visibility Change Real-Time Sync
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -69,7 +148,7 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("focus", handleWindowFocus);
 
-    // Optional 15-second polling interval for multi-device sync
+    // 15-second polling interval for multi-device sync fallback
     const interval = setInterval(() => {
       fetchDatabase(true);
     }, 15000);
@@ -80,6 +159,37 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
       clearInterval(interval);
     };
   }, [fetchDatabase]);
+
+  // Conflict & Leads handlers
+  const handleUpdateConflict = async (id, updates) => {
+    try {
+      await adminService.updateConflict(id, updates);
+      setDbData((prev) => ({
+        ...prev,
+        bookingConflicts: (prev.bookingConflicts || []).map((c) =>
+          c.id === id ? { ...c, ...updates } : c
+        )
+      }));
+      showToast("อัปเดตสถานะคิวซ้อนเรียบร้อย");
+      fetchDatabase(true);
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  };
+
+  const handleDeleteConflict = async (id) => {
+    try {
+      await adminService.deleteConflict(id);
+      setDbData((prev) => ({
+        ...prev,
+        bookingConflicts: (prev.bookingConflicts || []).filter((c) => c.id !== id)
+      }));
+      showToast("ลบบันทึกคิวซ้อนเรียบร้อย");
+      fetchDatabase(true);
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  };
 
   // Booking handlers
   const handleUpdateBookingStatus = async (id, status) => {
@@ -301,6 +411,24 @@ export default function AdminPanel({ onExitAdmin, onLogout }) {
                 bookings={dbData.bookings || []}
                 services={dbData.services || []}
                 staffList={dbData.staff || []}
+                bookingConflicts={dbData.bookingConflicts || []}
+                onUpdateStatus={handleUpdateBookingStatus}
+                onDeleteBooking={handleDeleteBooking}
+                onUpdateSlip={handleUpdateSlip}
+                onCreateBooking={handleCreateBooking}
+                onUpdateConflict={handleUpdateConflict}
+                onDeleteConflict={handleDeleteConflict}
+                onSwitchToCalendar={handleSwitchToCalendar}
+              />
+            </div>
+
+            <div className={activeTab === "calendar" ? "block" : "hidden"}>
+              <AdminCalendarTab
+                bookings={dbData.bookings || []}
+                services={dbData.services || []}
+                staffList={dbData.staff || []}
+                targetDate={calendarTargetDate}
+                onTargetDateHandled={() => setCalendarTargetDate(null)}
                 onUpdateStatus={handleUpdateBookingStatus}
                 onDeleteBooking={handleDeleteBooking}
                 onUpdateSlip={handleUpdateSlip}

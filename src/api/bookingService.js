@@ -47,14 +47,18 @@ export async function fetchStaff(serviceId) {
  * Fetch available time slots for a specific staff member on a chosen date
  * @param {string} staffId Staff ID
  * @param {string} date Date in YYYY-MM-DD format
- * @returns {Promise<{ allSlots: string[], bookedSlots: string[], availableSlots: string[] }>}
+ * @param {string} [serviceId] Service ID to calculate duration-based availability
+ * @returns {Promise<{ allSlots: string[], bookedSlots: string[], availableSlots: string[], slotDetails: Array }>}
  */
-export async function fetchAvailability(staffId, date) {
+export async function fetchAvailability(staffId, date, serviceId) {
   try {
     if (!staffId || !date) {
-      return { allSlots: [], bookedSlots: [], availableSlots: [] };
+      return { allSlots: [], bookedSlots: [], availableSlots: [], slotDetails: [] };
     }
-    const query = `?staffId=${encodeURIComponent(staffId)}&date=${encodeURIComponent(date)}`;
+    let query = `?staffId=${encodeURIComponent(staffId)}&date=${encodeURIComponent(date)}`;
+    if (serviceId) {
+      query += `&serviceId=${encodeURIComponent(serviceId)}`;
+    }
     const response = await fetch(`${API_BASE_URL}/availability${query}`);
     const result = await response.json();
     if (!response.ok || !result.success) {

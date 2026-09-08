@@ -18,7 +18,13 @@ import {
   RefreshCw,
   Database,
   Activity,
-  CheckCheck
+  CheckCheck,
+  Mail,
+  Inbox,
+  BellRing,
+  CreditCard,
+  XCircle,
+  Eye
 } from "lucide-react";
 import { GOOGLE_APPS_SCRIPT_CODE } from "../../data/googleAppsScriptCode";
 import { adminService } from "../../api/adminService";
@@ -121,7 +127,36 @@ export default function AdminGoogleSheetTab({
   const [pulling, setPulling] = useState(false);
   const [pullResult, setPullResult] = useState(null);
 
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailResult, setEmailResult] = useState(null);
+  const [testEmailAddress, setTestEmailAddress] = useState("");
+
   const [saveStatus, setSaveStatus] = useState("");
+
+  const handleTestEmail = async () => {
+    const trimmed = webAppUrl.trim();
+    if (!trimmed) {
+      alert("กรุณาระบุ Google Apps Script Web App URL ก่อนทดสอบส่งอีเมล");
+      return;
+    }
+    setSendingEmail(true);
+    setEmailResult(null);
+    try {
+      const res = await adminService.testEmail(trimmed, testEmailAddress.trim());
+      setEmailResult({
+        success: true,
+        message: res.message || "ส่งอีเมลแจ้งเตือนทดสอบสำเร็จเรียบร้อยแล้ว!",
+        details: res.details
+      });
+    } catch (err) {
+      setEmailResult({
+        success: false,
+        message: err.message || "เกิดข้อผิดพลาดในการส่งอีเมลทดสอบ"
+      });
+    } finally {
+      setSendingEmail(false);
+    }
+  };
 
   const handleCopyCode = async () => {
     try {
@@ -685,6 +720,171 @@ export default function AdminGoogleSheetTab({
             >
               <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>{pullResult.message}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 2.5 Automated Luxury Email Notification System Card */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-xs space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-700 shrink-0">
+              <Mail className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold tracking-widest text-[#B88555] uppercase block">
+                Automated Gmail Notification Engine
+              </span>
+              <h4 className="font-serif text-base font-semibold text-gray-900 flex items-center gap-2">
+                <span>ระบบส่งอีเมลแจ้งเตือน Gmail อัตโนมัติ (Luxury HTML Templates)</span>
+              </h4>
+              <p className="text-xs text-gray-500 mt-0.5">
+                ส่งตรงถึง Gmail ของ Admin ทันทีเมื่อมีรายการจองใหม่, คิวถูกยกเลิก, หรือมีการแนบสลิปโอนเงิน
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold text-gray-700 bg-amber-50/80 px-3 py-1.5 rounded-lg border border-amber-200/60 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>MailApp / Gmail พร้อมใช้งาน</span>
+            </span>
+          </div>
+        </div>
+
+        {/* 3 Luxury Email Trigger Cases Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+          {/* Case 1: New Booking */}
+          <div className="p-4 bg-[#FAF6F0] rounded-xl border border-[#EFE6DD] space-y-2 relative overflow-hidden">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs">
+                  <BellRing className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs font-bold text-[#3E2723]">1. มีการจองใหม่ (New Booking)</span>
+              </div>
+              <span className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-full">
+                Auto 🔔
+              </span>
+            </div>
+            <p className="text-[11px] text-[#6D4C41] leading-relaxed">
+              <strong>หัวข้อ:</strong> <code>🔔 มีการจองใหม่ - [ชื่อลูกค้า] [วันที่] เวลา [เวลา] น.</code>
+            </p>
+            <ul className="text-[11px] text-gray-600 space-y-1 list-disc list-inside">
+              <li>ตารางสรุปข้อมูลลูกค้า, ช่าง, บริการ, ยอดเงินครบถ้วน</li>
+              <li>ปุ่มกดเปิดดู Google Sheet และ Google Calendar โดยตรง</li>
+              <li>ลิงก์แตะโทรออกหาลูกค้าได้ทันที (Click-to-Call)</li>
+            </ul>
+          </div>
+
+          {/* Case 2: Booking Cancelled */}
+          <div className="p-4 bg-[#FAF6F0] rounded-xl border border-[#EFE6DD] space-y-2 relative overflow-hidden">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-7 h-7 rounded-lg bg-rose-100 text-rose-800 flex items-center justify-center font-bold text-xs">
+                  <XCircle className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs font-bold text-[#3E2723]">2. แจ้งเตือนการยกเลิกคิว (Cancelled)</span>
+              </div>
+              <span className="text-[10px] font-bold bg-rose-600 text-white px-2 py-0.5 rounded-full">
+                Auto ❌
+              </span>
+            </div>
+            <p className="text-[11px] text-[#6D4C41] leading-relaxed">
+              <strong>หัวข้อ:</strong> <code>❌ แจ้งเตือนการยกเลิกคิว - [ชื่อลูกค้า] [วันที่] เวลา [เวลา] น.</code>
+            </p>
+            <ul className="text-[11px] text-gray-600 space-y-1 list-disc list-inside">
+              <li>กล่องแจ้งเตือนเน้นย้ำ <strong>"ช่วงเวลานี้ว่างลงแล้ว"</strong></li>
+              <li>ช่วยให้แอดมินเปิดรับคิวใหม่หรือจัดสรรเวลาช่างได้ทันที</li>
+              <li>ลบหรืออัปเดตสถานะใน Google Calendar ให้อัตโนมัติ</li>
+            </ul>
+          </div>
+
+          {/* Case 3: Payment Slip */}
+          <div className="p-4 bg-[#FAF6F0] rounded-xl border border-[#EFE6DD] space-y-2 relative overflow-hidden">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-7 h-7 rounded-lg bg-blue-100 text-blue-800 flex items-center justify-center font-bold text-xs">
+                  <CreditCard className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs font-bold text-[#3E2723]">3. แนบสลิปโอนเงิน (Payment Slip)</span>
+              </div>
+              <span className="text-[10px] font-bold bg-blue-600 text-white px-2 py-0.5 rounded-full">
+                Auto 💳
+              </span>
+            </div>
+            <p className="text-[11px] text-[#6D4C41] leading-relaxed">
+              <strong>หัวข้อ:</strong> <code>💳 มีการแนบสลิปโอนเงินใหม่ - [ชื่อลูกค้า] [รหัสจอง]</code>
+            </p>
+            <ul className="text-[11px] text-gray-600 space-y-1 list-disc list-inside">
+              <li>แสดง <strong>ภาพตัวอย่างสลิป (Thumbnail Preview)</strong> ในอีเมล</li>
+              <li>ปุ่มกดดูสลิปต้นฉบับความละเอียดสูงบน Google Drive</li>
+              <li>สรุปยอดเงินและบริการเพื่อการตรวจสอบที่รวดเร็ว</li>
+            </ul>
+          </div>
+        </div>
+
+        {/* Email Recipient Setup & Interactive Test Trigger */}
+        <div className="pt-3 border-t border-gray-100 space-y-3">
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            <div className="space-y-1">
+              <div className="text-xs font-semibold text-gray-800 flex items-center gap-1.5">
+                <span>📬 บัญชีอีเมล Admin ผู้รับการแจ้งเตือน:</span>
+                <span className="font-mono text-[#B88555] bg-amber-50/80 px-2 py-0.5 rounded border border-amber-200 text-xs">
+                  {settings.ownerEmail || gasStatus?.adminEmail || "ดึงจากแท็บ Settings (OwnerEmail) หรือ Google Account"}
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-500">
+                สามารถเปลี่ยนอีเมลได้ในแท็บ <strong>Settings</strong> แถว <code>OwnerEmail</code> ในชีต หรือกรอกอีเมลทดสอบด้านล่าง
+              </p>
+            </div>
+
+            {/* Test Email Action Button */}
+            <div className="flex items-center gap-2">
+              <input
+                type="email"
+                placeholder="ใส่อีเมลที่ต้องการทดสอบ (ถ้าไม่ใส่จะส่งหา Admin)"
+                value={testEmailAddress}
+                onChange={(e) => setTestEmailAddress(e.target.value)}
+                className="px-3 py-2 text-xs border border-gray-200 rounded-xl focus:border-[#D4A373] outline-none min-w-[240px] font-sans"
+              />
+              <button
+                onClick={handleTestEmail}
+                disabled={sendingEmail || !webAppUrl}
+                className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[#3E2723] to-[#4E342E] hover:from-[#2D1810] hover:to-[#3E2723] text-white text-xs font-semibold rounded-xl shadow-xs transition-all disabled:opacity-50 cursor-pointer shrink-0"
+              >
+                <Send className={`w-3.5 h-3.5 text-[#E8D3BF] ${sendingEmail ? "animate-spin" : ""}`} />
+                <span>{sendingEmail ? "กำลังส่งอีเมล..." : "✉️ ทดสอบส่งอีเมลแจ้งเตือน Admin"}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Test Email Response Feedback Alert */}
+          {emailResult && (
+            <div
+              className={`p-3.5 rounded-xl border text-xs flex items-start gap-2.5 animate-in fade-in ${
+                emailResult.success
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                  : "bg-rose-50 border-rose-200 text-rose-900"
+              }`}
+            >
+              {emailResult.success ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+              ) : (
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+              )}
+              <div className="space-y-0.5">
+                <div className="font-semibold">{emailResult.message}</div>
+                {emailResult.details?.adminEmail && (
+                  <div className="text-[11px] text-emerald-700">
+                    ผู้รับ: <strong>{emailResult.details.adminEmail}</strong>
+                    {emailResult.details?.mailQuota !== undefined && (
+                      <span className="ml-2">| โควต้าคงเหลือ: {emailResult.details.mailQuota} ฉบับ/วัน</span>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

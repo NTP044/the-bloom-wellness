@@ -17,18 +17,68 @@ import {
   TrendingUp,
   DollarSign,
   Plus,
-  X
+  X,
+  PhoneCall,
+  Edit3,
+  Save,
+  ChevronDown,
+  ChevronUp,
+  ShieldAlert,
+  History
 } from "lucide-react";
 import SlipZoomModal from "./SlipZoomModal";
+
+// Helper to format exact timestamp with millisecond precision
+function formatPrecisionTimestamp(isoStr, msTimestamp) {
+  if (msTimestamp) {
+    const d = new Date(msTimestamp);
+    if (!isNaN(d.getTime())) {
+      const h = String(d.getHours()).padStart(2, "0");
+      const m = String(d.getMinutes()).padStart(2, "0");
+      const s = String(d.getSeconds()).padStart(2, "0");
+      const ms = String(d.getMilliseconds()).padStart(3, "0");
+      return `${h}:${m}:${s}.${ms}`;
+    }
+  }
+  if (isoStr) {
+    const d = new Date(isoStr);
+    if (!isNaN(d.getTime())) {
+      const h = String(d.getHours()).padStart(2, "0");
+      const m = String(d.getMinutes()).padStart(2, "0");
+      const s = String(d.getSeconds()).padStart(2, "0");
+      const ms = String(d.getMilliseconds()).padStart(3, "0");
+      return `${h}:${m}:${s}.${ms}`;
+    }
+  }
+  return "-";
+}
+
+function timeToMinutes(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") return 0;
+  const parts = timeStr.trim().split(":");
+  const h = parseInt(parts[0], 10) || 0;
+  const m = parseInt(parts[1], 10) || 0;
+  return h * 60 + m;
+}
+
+function minutesToTime(minutes) {
+  const h = Math.floor(minutes / 60) % 24;
+  const m = minutes % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
 
 export default function AdminBookingsTab({
   bookings = [],
   services = [],
   staffList = [],
+  bookingConflicts = [],
   onUpdateStatus,
   onDeleteBooking,
   onUpdateSlip,
-  onCreateBooking
+  onCreateBooking,
+  onUpdateConflict,
+  onDeleteConflict,
+  onSwitchToCalendar
 }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -36,6 +86,11 @@ export default function AdminBookingsTab({
   const [deletingId, setDeletingId] = useState(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showConflictsSection, setShowConflictsSection] = useState(true);
+  const [conflictStatusFilter, setConflictStatusFilter] = useState("all");
+  const [editingConflictNoteId, setEditingConflictNoteId] = useState(null);
+  const [tempNote, setTempNote] = useState("");
+  const [updatingConflictId, setUpdatingConflictId] = useState(null);
   const [newBooking, setNewBooking] = useState({
     serviceId: "",
     staffId: "",
@@ -47,6 +102,43 @@ export default function AdminBookingsTab({
     specialRequest: "",
     status: "confirmed"
   });
+
+  // Calculate conflicting bookings (same staff, same date, overlapping time, not cancelled)
+  const conflictingBookingIds = useMemo(() => {
+    const conflictSet = new Set();
+    const validBookings = bookings.filter((b) => b.status !== "cancelled");
+
+    for (let i = 0; i < validBookings.length; i++) {
+      const b1 = validBookings[i];
+      const s1 = timeToMinutes(b1.time);
+      let d1 = parseInt(b1.serviceDuration, 10);
+      if (!d1 || isNaN(d1)) {
+        const srv = services.find((s) => s.id === b1.serviceId);
+        d1 = srv?.duration ? parseInt(srv.duration, 10) : 60;
+      }
+      const e1 = s1 + d1;
+
+      for (let j = i + 1; j < validBookings.length; j++) {
+        const b2 = validBookings[j];
+        if (b1.staffId === b2.staffId && b1.date === b2.date) {
+          const s2 = timeToMinutes(b2.time);
+          let d2 = parseInt(b2.serviceDuration, 10);
+          if (!d2 || isNaN(d2)) {
+            const srv = services.find((s) => s.id === b2.serviceId);
+            d2 = srv?.duration ? parseInt(srv.duration, 10) : 60;
+          }
+          const e2 = s2 + d2;
+
+          // Overlap condition: start1 < end2 && end1 > start2
+          if (s1 < e2 && e1 > s2) {
+            conflictSet.add(b1.id);
+            conflictSet.add(b2.id);
+          }
+        }
+      }
+    }
+    return conflictSet;
+  }, [bookings, services]);
 
   // Filter staff by selected service skills
   const availableStaffForModal = useMemo(() => {
@@ -220,7 +312,264 @@ export default function AdminBookingsTab({
         </div>
       </div>
 
+      {/* 1.5 Real-Time Double Booking Conflict Leads Section */}
+      {bookingConflicts && bookingConflicts.length > 0 && (
+        <div className="bg-white rounded-2xl border border-amber-200/90 shadow-sm overflow-hidden animate-fade-in">
+          <div className="bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/5 p-4 sm:p-5 border-b border-amber-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-700 flex items-center justify-center shrink-0 border border-amber-300">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
+                    <span>⚡ บันทึกคิวที่ลูกค้ากดจองชนกัน (Collision Leads & Logs)</span>
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500 text-white shadow-2xs">
+                    {bookingConflicts.length} ครั้ง
+                  </span>
+                  {bookingConflicts.filter(c => (c.status || "pending_callback") === "pending_callback").length > 0 && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200 animate-pulse">
+                      รอติดต่อ {bookingConflicts.filter(c => (c.status || "pending_callback") === "pending_callback").length} รายการ
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-stone-600 mt-0.5">
+                  เมื่อมีลูกค้ากดจองเวลาเดียวกัน ระบบจะแจ้งลูกค้าให้เลือกเวลาใหม่ และส่งข้อมูลมาที่นี่เพื่อให้ผู้จัดการร้านติดตามดูแลได้ทันที
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowConflictsSection(!showConflictsSection)}
+                className="px-3.5 py-1.5 rounded-lg bg-white border border-amber-200 hover:bg-amber-50 text-amber-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+              >
+                <span>{showConflictsSection ? "ย่อรายการ" : "ขยายดูรายละเอียด"}</span>
+                {showConflictsSection ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          {showConflictsSection && (
+            <div className="p-4 sm:p-5 space-y-4">
+              {/* Filter Tabs for Conflicts */}
+              <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1">
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-stone-400 font-medium text-[11px] mr-1">สถานะ:</span>
+                  {[
+                    { id: "all", label: `ทั้งหมด (${bookingConflicts.length})` },
+                    { id: "pending_callback", label: "รอดำเนินการ" },
+                    { id: "rebooked", label: "จองรอบใหม่สำเร็จ" },
+                    { id: "contacted", label: "ติดต่อแล้ว" },
+                    { id: "resolved", label: "เสร็จสิ้น" }
+                  ].map((tab) => (
+                    <button
+                      key={`c-tab-${tab.id}`}
+                      type="button"
+                      onClick={() => setConflictStatusFilter(tab.id)}
+                      className={`px-2.5 py-1 rounded-md font-medium text-xs transition cursor-pointer ${
+                        conflictStatusFilter === tab.id
+                          ? "bg-stone-800 text-white font-semibold"
+                          : "bg-stone-100 text-stone-600 hover:bg-stone-200"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Conflict Cards List */}
+              <div className="space-y-3">
+                {bookingConflicts
+                  .filter((c) => conflictStatusFilter === "all" || (c.status || "pending_callback") === conflictStatusFilter)
+                  .map((c) => {
+                    const statusVal = c.status || "pending_callback";
+                    const isEditingNote = editingConflictNoteId === c.id;
+
+                    return (
+                      <div
+                        key={`conflict-${c.id}`}
+                        className={`p-4 rounded-xl border transition-all ${
+                          statusVal === "pending_callback"
+                            ? "bg-amber-50/40 border-amber-200/90 shadow-2xs"
+                            : statusVal === "rebooked"
+                            ? "bg-emerald-50/30 border-emerald-200"
+                            : "bg-stone-50/60 border-stone-200"
+                        }`}
+                      >
+                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                          {/* Left: Customer info & requested slot */}
+                          <div className="space-y-1.5 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-sm text-stone-900">{c.customerName}</span>
+                              {c.customerPhone && (
+                                <a
+                                  href={`tel:${c.customerPhone}`}
+                                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200 hover:bg-blue-100 transition"
+                                >
+                                  <PhoneCall className="w-3 h-3 text-blue-500" />
+                                  <span>{c.customerPhone}</span>
+                                </a>
+                              )}
+                              {c.customerEmail && (
+                                <span className="text-[11px] text-stone-500">{c.customerEmail}</span>
+                              )}
+                              <span className="text-[10px] text-stone-400 font-mono">
+                                ({formatPrecisionTimestamp(c.createdAt, c.createdAtMs)})
+                              </span>
+                            </div>
+
+                            <div className="text-xs text-stone-700 flex items-center gap-2 flex-wrap">
+                              <span>บริการ: <strong>{c.serviceName}</strong></span>
+                              <span>•</span>
+                              <span>ช่าง: <strong>{c.staffName}</strong></span>
+                              <span>•</span>
+                              <span className="font-semibold text-rose-600 flex items-center gap-1">
+                                <span>{c.date} เวลา {c.time} น.</span>
+                                <span className="text-[9px] bg-rose-100 text-rose-700 px-1 py-0.2 rounded font-bold">เวลาที่ชน</span>
+                              </span>
+                            </div>
+
+                            {/* Collision detail note */}
+                            {c.conflictWithBooking && (
+                              <div className="text-[11px] text-amber-800 bg-amber-100/60 px-2.5 py-1 rounded-md border border-amber-200/80 inline-block">
+                                <span>ชนกับคิว: <strong>#{c.conflictWithBooking.id}</strong> ({c.conflictWithBooking.customerName || "ลูกค้าอื่น"}) เวลา {c.conflictWithBooking.time} น.</span>
+                              </div>
+                            )}
+
+                            {/* Admin Note Display/Edit */}
+                            <div className="pt-1">
+                              {isEditingNote ? (
+                                <div className="flex items-center gap-1.5 max-w-md">
+                                  <input
+                                    type="text"
+                                    value={tempNote}
+                                    onChange={(e) => setTempNote(e.target.value)}
+                                    placeholder="บันทึกโน้ต (เช่น โทรแจ้งแล้ว ลูกค้าขอเลื่อนเป็น 15:00)..."
+                                    className="flex-1 text-xs px-2.5 py-1 bg-white border border-amber-300 rounded outline-none focus:ring-1 focus:ring-amber-500"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (onUpdateConflict) {
+                                        await onUpdateConflict(c.id, { adminNote: tempNote });
+                                      }
+                                      setEditingConflictNoteId(null);
+                                    }}
+                                    className="p-1 bg-emerald-600 text-white rounded hover:bg-emerald-700 text-xs px-2 cursor-pointer flex items-center gap-1"
+                                  >
+                                    <Save className="w-3 h-3" />
+                                    <span>บันทึก</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingConflictNoteId(null)}
+                                    className="p-1 bg-stone-200 text-stone-700 rounded hover:bg-stone-300 text-xs px-2 cursor-pointer"
+                                  >
+                                    ยกเลิก
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2 text-xs text-stone-600">
+                                  <span>โน้ต: <em className="text-stone-800">{c.adminNote || "(ไม่มีโน้ต)"}</em></span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingConflictNoteId(c.id);
+                                      setTempNote(c.adminNote || "");
+                                    }}
+                                    className="text-stone-400 hover:text-stone-700 p-0.5 cursor-pointer"
+                                    title="แก้ไขโน้ต"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Right: Status selector and actions */}
+                          <div className="flex items-center gap-2 self-start lg:self-center flex-wrap">
+                            <select
+                              value={statusVal}
+                              onChange={async (e) => {
+                                if (onUpdateConflict) {
+                                  setUpdatingConflictId(c.id);
+                                  await onUpdateConflict(c.id, { status: e.target.value });
+                                  setUpdatingConflictId(null);
+                                }
+                              }}
+                              disabled={updatingConflictId === c.id}
+                              className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg border outline-none cursor-pointer ${
+                                statusVal === "pending_callback"
+                                  ? "bg-amber-100 text-amber-900 border-amber-300"
+                                  : statusVal === "rebooked"
+                                  ? "bg-emerald-100 text-emerald-900 border-emerald-300"
+                                  : statusVal === "contacted"
+                                  ? "bg-blue-100 text-blue-900 border-blue-300"
+                                  : "bg-stone-100 text-stone-800 border-stone-300"
+                              }`}
+                            >
+                              <option value="pending_callback">⏳ รอดำเนินการ / โทรกลับ</option>
+                              <option value="contacted">📞 ติดต่อลูกค้าแล้ว</option>
+                              <option value="rebooked">✅ ลูกค้าจองรอบใหม่แล้ว</option>
+                              <option value="resolved">🏁 จัดการเสร็จสิ้น</option>
+                            </select>
+
+                            {c.customerPhone && (
+                              <a
+                                href={`tel:${c.customerPhone}`}
+                                className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer"
+                                title="โทรหาลูกค้า"
+                              >
+                                <Phone className="w-3.5 h-3.5" />
+                              </a>
+                            )}
+
+                            {onDeleteConflict && (
+                              <button
+                                type="button"
+                                onClick={() => onDeleteConflict(c.id)}
+                                className="p-1.5 rounded-lg bg-stone-100 text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                                title="ลบประวัตินี้"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 2. Filter & Search Controls */}
+      {conflictingBookingIds.size > 0 && (
+        <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-950 flex items-start gap-3 shadow-xs">
+          <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <div className="flex-1 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-rose-900 text-sm">
+                ⚠️ มีรายการจองที่เวลาทับซ้อนกัน ({conflictingBookingIds.size} รายการ)
+              </span>
+              <span className="text-[10px] font-semibold bg-rose-100 px-2 py-0.5 rounded text-rose-800 border border-rose-300">
+                ตรวจพบ Conflict
+              </span>
+            </div>
+            <p className="text-rose-700 mt-0.5 leading-relaxed">
+              ระบบตรวจพบคิวที่ช่างคนเดียวกันมีเวลานัดทับซ้อนกัน แถวรายการที่ซ้ำจะถูกไฮไลต์สีแดงอ่อนพร้อมป้ายแจ้งเตือน คุณสามารถคลิกดูรายละเอียดเพื่อตรวจสอบเวลาส่งคำขอระดับมิลลิวินาที (Precision Timestamp) หรือปรับเปลี่ยนเวลาให้ลูกค้าได้ทันที
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-xs flex flex-col md:flex-row gap-3 items-center justify-between">
         {/* Search */}
         <div className="relative w-full md:w-80">
@@ -258,14 +607,26 @@ export default function AdminBookingsTab({
             ))}
           </div>
 
-          <button
-            type="button"
-            onClick={handleOpenCreateModal}
-            className="px-3.5 py-1.5 bg-[#D4A373] hover:bg-[#b07e4c] text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer whitespace-nowrap"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>+ เพิ่มคิวจอง</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {onSwitchToCalendar && (
+              <button
+                type="button"
+                onClick={onSwitchToCalendar}
+                className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors border border-stone-200 cursor-pointer whitespace-nowrap"
+              >
+                <Calendar className="w-3.5 h-3.5 text-[#D4A373]" />
+                <span>มุมมองปฏิทิน</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleOpenCreateModal}
+              className="px-3.5 py-1.5 bg-[#D4A373] hover:bg-[#b07e4c] text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer whitespace-nowrap"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>+ เพิ่มคิวจอง</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -298,146 +659,177 @@ export default function AdminBookingsTab({
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 text-xs">
-                {filteredBookings.map((b, bIdx) => (
-                  <tr key={`${b.id || "bk"}-${bIdx}`} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="py-3.5 px-4 font-mono">
-                      <div className="font-semibold text-gray-900">{b.id}</div>
-                      <div className="text-[10px] text-gray-400">
-                        {new Date(b.createdAt).toLocaleDateString("th-TH", {
-                          day: "numeric",
-                          month: "short",
-                          hour: "2-digit",
-                          minute: "2-digit"
-                        })}
-                      </div>
-                    </td>
+                {filteredBookings.map((b, bIdx) => {
+                  const isConflict = conflictingBookingIds.has(b.id);
+                  const precisionTime = formatPrecisionTimestamp(b.createdAt, b.createdAtMs);
 
-                    <td className="py-3.5 px-4">
-                      <div className="font-medium text-gray-900 flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-[#D4A373]" />
-                        {b.date}
-                      </div>
-                      <div className="text-gray-500 flex items-center gap-1.5 mt-0.5">
-                        <Clock className="w-3.5 h-3.5 text-gray-400" />
-                        {b.time} น. ({b.serviceDuration || 60} นาที)
-                      </div>
-                    </td>
+                  return (
+                    <tr
+                      key={`${b.id || "bk"}-${bIdx}`}
+                      className={`transition-colors ${
+                        isConflict ? "bg-rose-50/40 hover:bg-rose-50/70" : "hover:bg-gray-50/50"
+                      }`}
+                    >
+                      <td className="py-3.5 px-4 font-mono">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold text-gray-900">{b.id}</span>
+                          {isConflict && (
+                            <span
+                              title="พบการจองช่วงเวลาทับซ้อนกับคิวอื่นของช่างคนเดียวกัน"
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 text-[10px] font-bold border border-rose-300 animate-pulse"
+                            >
+                              ⚠️ คิวซ้ำซ้อน
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-gray-500 mt-0.5" title={`เวลาคำขอระดับมิลลิวินาที: ${b.createdAt || ""}`}>
+                          {new Date(b.createdAt).toLocaleDateString("th-TH", {
+                            day: "numeric",
+                            month: "short"
+                          })}{" "}
+                          <span className="text-[#B88555] font-semibold">{precisionTime} น.</span>
+                        </div>
+                      </td>
 
-                    <td className="py-3.5 px-4">
-                      <div className="font-medium text-gray-900 max-w-[180px] truncate">
-                        {b.serviceName}
-                      </div>
-                      <div className="text-emerald-600 font-semibold mt-0.5">
-                        ฿{(parseFloat(b.servicePrice) || 0).toLocaleString()}
-                      </div>
-                    </td>
+                      <td className="py-3.5 px-4">
+                        <div className="font-medium text-gray-900 flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-[#D4A373]" />
+                          {b.date}
+                        </div>
+                        <div className="text-gray-500 flex items-center gap-1.5 mt-0.5">
+                          <Clock className="w-3.5 h-3.5 text-gray-400" />
+                          {b.time} - {b.endTime || minutesToTime(timeToMinutes(b.time) + (b.serviceDuration || 60))} น. ({b.serviceDuration || 60} นาที)
+                        </div>
+                      </td>
 
-                    <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-2">
-                        {b.staffAvatar ? (
-                          <img
-                            src={b.staffAvatar}
-                            alt={b.staffName}
-                            className="w-7 h-7 rounded-full object-cover border border-gray-200 shrink-0"
-                          />
+                      <td className="py-3.5 px-4">
+                        <div className="font-medium text-gray-900 max-w-[180px] truncate">
+                          {b.serviceName}
+                        </div>
+                        <div className="text-emerald-600 font-semibold mt-0.5">
+                          ฿{(parseFloat(b.servicePrice) || 0).toLocaleString()}
+                        </div>
+                      </td>
+
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-2">
+                          {b.staffAvatar ? (
+                            <img
+                              src={b.staffAvatar}
+                              alt={b.staffName}
+                              className="w-7 h-7 rounded-full object-cover border border-gray-200 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+                              <User className="w-4 h-4" />
+                            </div>
+                          )}
+                          <span className="font-medium text-gray-800">{b.staffName}</span>
+                        </div>
+                      </td>
+
+                      <td className="py-3.5 px-4">
+                        <div className="font-medium text-gray-900 flex items-center gap-1.5">
+                          <span>{b.customerName}</span>
+                          {b.lineDisplayName && (
+                            <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded font-medium border border-emerald-100 flex items-center gap-0.5">
+                              LINE: {b.lineDisplayName}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <a
+                            href={`tel:${b.customerPhone}`}
+                            className="inline-flex items-center gap-1 text-[#D4A373] hover:text-[#b07e4c] font-medium bg-[#D4A373]/10 px-2 py-0.5 rounded hover:bg-[#D4A373]/20 transition-colors"
+                            title="โทรหาลูกค้าทันที"
+                          >
+                            <Phone className="w-3 h-3" />
+                            <span>{b.customerPhone}</span>
+                          </a>
+                        </div>
+                        {b.specialRequest && (
+                          <p className="text-[11px] text-gray-400 mt-1 italic max-w-xs truncate">
+                            "{b.specialRequest}"
+                          </p>
+                        )}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-center">
+                        {b.paymentSlipUrl ? (
+                          <button
+                            onClick={() =>
+                              setSelectedSlip({
+                                url: b.paymentSlipUrl,
+                                id: b.id,
+                                name: b.customerName
+                              })
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors border border-gray-200 cursor-pointer"
+                          >
+                            <ImageIcon className="w-3.5 h-3.5 text-[#D4A373]" />
+                            <span>ดูสลิป</span>
+                          </button>
                         ) : (
-                          <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
-                            <User className="w-4 h-4" />
-                          </div>
+                          <button
+                            onClick={() =>
+                              setSelectedSlip({
+                                url: "",
+                                id: b.id,
+                                name: b.customerName
+                              })
+                            }
+                            className="text-[11px] text-gray-400 hover:text-gray-600 hover:underline cursor-pointer"
+                          >
+                            + เพิ่มสลิป
+                          </button>
                         )}
-                        <span className="font-medium text-gray-800">{b.staffName}</span>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="py-3.5 px-4">
-                      <div className="font-medium text-gray-900 flex items-center gap-1.5">
-                        <span>{b.customerName}</span>
-                        {b.lineDisplayName && (
-                          <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded font-medium border border-emerald-100 flex items-center gap-0.5">
-                            LINE: {b.lineDisplayName}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <a
-                          href={`tel:${b.customerPhone}`}
-                          className="inline-flex items-center gap-1 text-[#D4A373] hover:text-[#b07e4c] font-medium bg-[#D4A373]/10 px-2 py-0.5 rounded hover:bg-[#D4A373]/20 transition-colors"
-                          title="โทรหาลูกค้าทันที"
+                      <td className="py-3.5 px-4 text-center">
+                        <select
+                          value={b.status}
+                          onChange={(e) => onUpdateStatus(b.id, e.target.value)}
+                          className={`text-xs font-semibold py-1 px-2.5 rounded-lg border outline-none cursor-pointer ${
+                            b.status === "confirmed"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : b.status === "completed"
+                              ? "bg-blue-50 text-blue-700 border-blue-200"
+                              : b.status === "cancelled"
+                              ? "bg-gray-100 text-gray-600 border-gray-200"
+                              : "bg-amber-50 text-amber-700 border-amber-200"
+                          }`}
                         >
-                          <Phone className="w-3 h-3" />
-                          <span>{b.customerPhone}</span>
-                        </a>
-                      </div>
-                      {b.specialRequest && (
-                        <p className="text-[11px] text-gray-400 mt-1 italic max-w-xs truncate">
-                          "{b.specialRequest}"
-                        </p>
-                      )}
-                    </td>
+                          <option value="pending">รอยืนยัน</option>
+                          <option value="confirmed">ยืนยันแล้ว</option>
+                          <option value="completed">เสร็จสิ้น</option>
+                          <option value="cancelled">ยกเลิก</option>
+                        </select>
+                      </td>
 
-                    <td className="py-3.5 px-4 text-center">
-                      {b.paymentSlipUrl ? (
-                        <button
-                          onClick={() =>
-                            setSelectedSlip({
-                              url: b.paymentSlipUrl,
-                              id: b.id,
-                              name: b.customerName
-                            })
-                          }
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors border border-gray-200"
-                        >
-                          <ImageIcon className="w-3.5 h-3.5 text-[#D4A373]" />
-                          <span>ดูสลิป</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() =>
-                            setSelectedSlip({
-                              url: "",
-                              id: b.id,
-                              name: b.customerName
-                            })
-                          }
-                          className="text-[11px] text-gray-400 hover:text-gray-600 hover:underline"
-                        >
-                          + เพิ่มสลิป
-                        </button>
-                      )}
-                    </td>
-
-                    <td className="py-3.5 px-4 text-center">
-                      <select
-                        value={b.status}
-                        onChange={(e) => onUpdateStatus(b.id, e.target.value)}
-                        className={`text-xs font-semibold py-1 px-2.5 rounded-lg border outline-none cursor-pointer ${
-                          b.status === "confirmed"
-                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                            : b.status === "completed"
-                            ? "bg-blue-50 text-blue-700 border-blue-200"
-                            : b.status === "cancelled"
-                            ? "bg-gray-100 text-gray-600 border-gray-200"
-                            : "bg-amber-50 text-amber-700 border-amber-200"
-                        }`}
-                      >
-                        <option value="pending">รอยืนยัน</option>
-                        <option value="confirmed">ยืนยันแล้ว</option>
-                        <option value="completed">เสร็จสิ้น</option>
-                        <option value="cancelled">ยกเลิก</option>
-                      </select>
-                    </td>
-
-                    <td className="py-3.5 px-4 text-right">
-                      <button
-                        onClick={() => handleDeleteConfirm(b.id)}
-                        className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                        title="ลบรายการจอง"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {onSwitchToCalendar && (
+                            <button
+                              type="button"
+                              onClick={() => onSwitchToCalendar(b.date)}
+                              className="p-1.5 text-stone-500 hover:text-[#B88555] hover:bg-amber-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-amber-200"
+                              title="เปิดดูคิวนี้บนปฏิทิน"
+                            >
+                              <Calendar className="w-4 h-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteConfirm(b.id)}
+                            className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="ลบรายการจอง"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -515,7 +907,17 @@ export default function AdminBookingsTab({
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
+                    {onSwitchToCalendar && (
+                      <button
+                        type="button"
+                        onClick={() => onSwitchToCalendar(b.date)}
+                        className="p-1 text-stone-500 hover:text-[#B88555] bg-stone-100 rounded border border-stone-200"
+                        title="เปิดดูบนปฏิทิน"
+                      >
+                        <Calendar className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     <select
                       value={b.status}
                       onChange={(e) => onUpdateStatus(b.id, e.target.value)}
@@ -646,15 +1048,20 @@ export default function AdminBookingsTab({
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    เวลา <span className="text-rose-500">*</span>
+                    เวลาเริ่มต้น <span className="text-rose-500">*</span>
                   </label>
                   <select
                     value={newBooking.time}
                     onChange={(e) => setNewBooking((prev) => ({ ...prev, time: e.target.value }))}
                     required
-                    className="w-full text-xs p-2.5 rounded-lg border border-gray-200 bg-white focus:border-[#D4A373] outline-none"
+                    className="w-full text-xs p-2.5 rounded-lg border border-gray-200 bg-white focus:border-[#D4A373] outline-none font-mono"
                   >
-                    {["10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00"].map((t) => (
+                    {[
+                      "10:00", "10:30", "11:00", "11:30", "12:00", "12:30",
+                      "13:00", "13:30", "14:00", "14:30", "15:00", "15:30",
+                      "16:00", "16:30", "17:00", "17:30", "18:00", "18:30",
+                      "19:00", "19:30", "20:00"
+                    ].map((t) => (
                       <option key={t} value={t}>
                         {t} น.
                       </option>

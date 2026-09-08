@@ -1,6 +1,6 @@
 import liff from "@line/liff";
 
-export const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2011476743-hvdHs7Pz";
+export const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2011503069-TsZBKwxb";
 
 let isInitialized = false;
 

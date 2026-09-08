@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import AdminLoginModal from "./components/admin/AdminLoginModal";
 import AdminPanel from "./components/admin/AdminPanel";
+import ConflictResolutionModal from "./components/ConflictResolutionModal";
 import {
   fetchServices,
   fetchStaff,
@@ -129,6 +130,28 @@ function generateNextDates(count = 14) {
   return dates;
 }
 
+// Time calculations & formatters for Available Time Slots Engine
+function timeToMinutes(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") return 0;
+  const parts = timeStr.trim().split(":");
+  const hours = parseInt(parts[0], 10) || 0;
+  const minutes = parseInt(parts[1], 10) || 0;
+  return hours * 60 + minutes;
+}
+
+function minutesToTime(minutes) {
+  const h = Math.floor(minutes / 60) % 24;
+  const m = minutes % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function addMinutesToTime(timeStr, durationMin) {
+  if (!timeStr) return "";
+  const startMin = timeToMinutes(timeStr);
+  const dur = parseInt(durationMin, 10) || 60;
+  return minutesToTime(startMin + dur);
+}
+
 export default function App() {
   // Calendar dates
   const calendarDates = useMemo(() => generateNextDates(14), []);
@@ -155,15 +178,18 @@ export default function App() {
   const [specialRequest, setSpecialRequest] = useState("");
   const [isAutoFilled, setIsAutoFilled] = useState(false);
 
-  // Availability & Slots
+  // Availability & Slots Engine
   const [availableSlots, setAvailableSlots] = useState([]);
   const [bookedSlots, setBookedSlots] = useState([]);
+  const [slotDetails, setSlotDetails] = useState([]);
+  const [timeOfDayFilter, setTimeOfDayFilter] = useState("all"); // "all", "morning", "afternoon", "evening"
   const [loadingAvailability, setLoadingAvailability] = useState(false);
 
   // Submitting State
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bookingSuccessData, setBookingSuccessData] = useState(null);
   const [bookingErrorMessage, setBookingErrorMessage] = useState(null);
+  const [conflictData, setConflictData] = useState(null);
 
   // My Bookings Drawer (Strict Customer Privacy & Isolation)
   const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -409,11 +435,12 @@ export default function App() {
     }
   }, [eligibleStaff, selectedStaffId]);
 
-  // 3. Fetch availability whenever staffId or date changes
+  // 3. Fetch availability whenever staffId, date, or serviceId changes
   useEffect(() => {
     if (!selectedStaffId || !selectedDate) {
       setAvailableSlots([]);
       setBookedSlots([]);
+      setSlotDetails([]);
       return;
     }
 
@@ -421,13 +448,14 @@ export default function App() {
     async function checkSlots() {
       setLoadingAvailability(true);
       try {
-        const res = await fetchAvailability(selectedStaffId, selectedDate);
+        const res = await fetchAvailability(selectedStaffId, selectedDate, selectedServiceId);
         if (isMounted) {
           setAvailableSlots(res.availableSlots || []);
           setBookedSlots(res.bookedSlots || []);
+          setSlotDetails(res.slotDetails || []);
 
           // If current selected time is no longer available, clear it
-          if (selectedTime && !res.availableSlots.includes(selectedTime)) {
+          if (selectedTime && res.availableSlots && !res.availableSlots.includes(selectedTime)) {
             setSelectedTime("");
           }
         }
@@ -444,7 +472,59 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [selectedStaffId, selectedDate]);
+  }, [selectedStaffId, selectedDate, selectedServiceId]);
+
+  // Real-Time SSE Listener for Instant Slot Invalidation & Anti-Collision Sync
+  useEffect(() => {
+    let eventSource = null;
+    try {
+      eventSource = new EventSource("/api/events");
+
+      eventSource.onmessage = (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (
+            payload.type === "booking:created" ||
+            payload.type === "slot:invalidated" ||
+            payload.type === "booking:deleted" ||
+            payload.type === "booking:updated" ||
+            payload.type === "data:synced"
+          ) {
+            // Live Slot Invalidation: If the event affects currently selected staff and date
+            if (selectedStaffId && selectedDate) {
+              fetchAvailability(selectedStaffId, selectedDate, selectedServiceId)
+                .then((res) => {
+                  setAvailableSlots(res.availableSlots || []);
+                  setBookedSlots(res.bookedSlots || []);
+                  setSlotDetails(res.slotDetails || []);
+
+                  // If our selected slot was just invalidated by someone else in real-time
+                  if (selectedTime && res.availableSlots && !res.availableSlots.includes(selectedTime)) {
+                    setSelectedTime("");
+                    setBookingErrorMessage("⚠️ ขออภัย ช่วงเวลาที่คุณเลือกเพิ่งถูกจองไปแล้ว กรุณาเลือกรอบเวลาอื่น");
+                  }
+                })
+                .catch(() => {});
+            }
+          }
+        } catch (err) {
+          console.warn("SSE parse error:", err);
+        }
+      };
+
+      eventSource.onerror = () => {
+        // SSE auto-reconnects natively
+      };
+    } catch (err) {
+      console.warn("SSE initialization error:", err);
+    }
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
+  }, [selectedStaffId, selectedDate, selectedServiceId, selectedTime]);
 
   // Selected Service & Staff Objects
   const currentService = useMemo(
@@ -495,6 +575,7 @@ export default function App() {
       const response = await createBooking(payload);
       if (response && response.success) {
         setBookingSuccessData(response.booking);
+        setConflictData(null);
         // Save to smart user memory
         if (lineProfile?.userId) {
           saveUserMemory(lineProfile.userId, customerName, customerPhone, customerEmail);
@@ -513,21 +594,40 @@ export default function App() {
         setIsAutoFilled(true);
 
         // Refresh availability
-        const res = await fetchAvailability(selectedStaffId, selectedDate);
+        const res = await fetchAvailability(selectedStaffId, selectedDate, selectedServiceId);
         setAvailableSlots(res.availableSlots || []);
         setBookedSlots(res.bookedSlots || []);
+        setSlotDetails(res.slotDetails || []);
         setSelectedTime("");
       }
     } catch (err) {
       console.error("Booking error:", err);
-      setBookingErrorMessage(
-        err.message || "ขออภัย ไม่สามารถดำเนินการจองได้ กรุณาตรวจสอบช่วงเวลาอีกครั้ง"
-      );
+      if (err.status === 409 || err.data?.conflict) {
+        const errorData = err.data || {};
+        const staffObj = staffList.find((s) => s.id === selectedStaffId);
+        const serviceObj = services.find((s) => s.id === selectedServiceId);
+        setConflictData({
+          message: err.message || errorData.message || "ช่วงเวลานี้เพิ่งถูกจองเต็มไปเมื่อสักครู่",
+          conflictDetails: errorData.conflictDetails || {},
+          alternateSlots: errorData.alternateSlots || [],
+          alternateStaff: errorData.alternateStaff || [],
+          requestedTime: selectedTime,
+          requestedStaffName: staffObj?.name || "ช่างที่เลือก",
+          date: selectedDate,
+          serviceName: serviceObj?.name || "บริการ"
+        });
+        setSelectedTime("");
+      } else {
+        setBookingErrorMessage(
+          err.message || "ขออภัย ไม่สามารถดำเนินการจองได้ กรุณาตรวจสอบช่วงเวลาอีกครั้ง"
+        );
+      }
       // Auto refresh slots on error in case slot was just booked
       if (selectedStaffId && selectedDate) {
-        fetchAvailability(selectedStaffId, selectedDate).then((res) => {
+        fetchAvailability(selectedStaffId, selectedDate, selectedServiceId).then((res) => {
           setAvailableSlots(res.availableSlots || []);
           setBookedSlots(res.bookedSlots || []);
+          setSlotDetails(res.slotDetails || []);
         });
       }
     } finally {
@@ -535,9 +635,31 @@ export default function App() {
     }
   };
 
+  // Conflict Resolution Handlers
+  const handleSelectAlternateSlot = (slot) => {
+    setSelectedTime(slot);
+    setConflictData(null);
+    setBookingErrorMessage(null);
+  };
+
+  const handleSelectAlternateStaff = (staffId, slot) => {
+    setSelectedStaffId(staffId);
+    if (slot) setSelectedTime(slot);
+    setConflictData(null);
+    setBookingErrorMessage(null);
+    if (staffId && selectedDate) {
+      fetchAvailability(staffId, selectedDate, selectedServiceId).then((res) => {
+        setAvailableSlots(res.availableSlots || []);
+        setBookedSlots(res.bookedSlots || []);
+        setSlotDetails(res.slotDetails || []);
+      });
+    }
+  };
+
   // Reset form for a new booking (Keeps remembered name, phone, email for speed!)
   const handleResetForNewBooking = () => {
     setBookingSuccessData(null);
+    setConflictData(null);
     setSelectedTime("");
     setSpecialRequest("");
     setBookingErrorMessage(null);
@@ -995,26 +1117,40 @@ export default function App() {
               )}
             </div>
 
-            {/* Step 03: Availability */}
+            {/* Step 03: Availability & Time Slots Engine */}
             <div className="mb-4">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-[10px] font-bold uppercase tracking-widest text-[#D4A373] mb-1.5 block">
                     Step 03
                   </span>
-                  <h2 className="text-xl font-serif text-gray-800">Availability</h2>
+                  <h2 className="text-xl font-serif text-gray-800">Select Time Slot</h2>
                 </div>
                 {loadingAvailability && (
                   <span className="text-[11px] text-gray-400 flex items-center gap-1">
                     <RefreshCw className="w-3 h-3 animate-spin text-[#D4A373]" />
-                    Checking...
+                    กำลังตรวจสอบคิว...
+                  </span>
+                )}
+              </div>
+
+              {/* Store Hours & Service Duration Notice */}
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <span className="text-[10px] px-2.5 py-1 rounded-full bg-stone-100 text-stone-700 font-medium flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-stone-500" />
+                  เวลาเปิดทำการ 10:00 - 20:30 น.
+                </span>
+                {currentService && (
+                  <span className="text-[10px] px-2.5 py-1 rounded-full bg-[#D4A373]/15 text-[#B88555] font-semibold flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-[#D4A373]" />
+                    ระยะเวลา {currentService.duration || 60} นาที
                   </span>
                 )}
               </div>
             </div>
 
             {/* Date Picker Cards */}
-            <div className="flex gap-2 mb-5 overflow-x-auto pb-2 no-scrollbar -mx-2 px-2">
+            <div className="flex gap-2 mb-4 overflow-x-auto pb-2 no-scrollbar -mx-2 px-2">
               {calendarDates.map((item, dIdx) => {
                 const isSelected = selectedDate === item.dateStr;
                 return (
@@ -1049,56 +1185,162 @@ export default function App() {
               })}
             </div>
 
-            {/* Time Slots Grid */}
-            <div className="grid grid-cols-3 gap-2 mb-4">
+            {/* Time of Day Filter Pills */}
+            <div className="flex items-center gap-1 mb-3 overflow-x-auto pb-1 no-scrollbar text-[11px]">
               {[
-                "10:00",
-                "11:00",
-                "12:00",
-                "13:00",
-                "14:00",
-                "15:00",
-                "16:00",
-                "17:00",
-                "18:00",
-                "19:00",
-              ].map((timeSlot, tIdx) => {
-                const isBooked = bookedSlots.includes(timeSlot);
-                const isSelected = selectedTime === timeSlot;
-
-                if (isBooked) {
-                  return (
-                    <button
-                      key={`booked-${timeSlot}-${tIdx}`}
-                      type="button"
-                      disabled
-                      className="py-2.5 px-1 text-xs border border-gray-100 bg-white rounded-md opacity-35 cursor-not-allowed line-through text-gray-400"
-                    >
-                      {timeSlot}
-                    </button>
-                  );
-                }
-
+                { id: "all", label: "ทั้งหมด" },
+                { id: "morning", label: "เช้า (10:00-12:30)" },
+                { id: "afternoon", label: "บ่าย (13:00-16:30)" },
+                { id: "evening", label: "เย็น (17:00-20:00)" }
+              ].map((pill) => {
+                const active = timeOfDayFilter === pill.id;
                 return (
                   <button
-                    key={`avail-${timeSlot}-${tIdx}`}
+                    key={pill.id}
                     type="button"
-                    onClick={() => setSelectedTime(timeSlot)}
-                    className={`py-2.5 px-1 text-xs rounded-md transition-colors cursor-pointer ${
-                      isSelected
-                        ? "bg-[#D4A373] text-white font-bold shadow-sm shadow-[#D4A373]/30 border border-transparent"
-                        : "border border-gray-200 bg-white text-gray-800 hover:bg-[#D4A373] hover:text-white hover:border-[#D4A373]"
+                    onClick={() => setTimeOfDayFilter(pill.id)}
+                    className={`px-2.5 py-1 rounded-md font-medium whitespace-nowrap transition cursor-pointer ${
+                      active
+                        ? "bg-stone-800 text-white shadow-2xs font-semibold"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                     }`}
                   >
-                    {timeSlot}
+                    {pill.label}
                   </button>
                 );
               })}
             </div>
 
+            {/* Time Slots Grid */}
+            <div className="grid grid-cols-3 sm:grid-cols-3 gap-2 mb-3">
+              {(() => {
+                const BASE_SLOTS = [
+                  "10:00", "10:30", "11:00", "11:30", "12:00", "12:30",
+                  "13:00", "13:30", "14:00", "14:30", "15:00", "15:30",
+                  "16:00", "16:30", "17:00", "17:30", "18:00", "18:30",
+                  "19:00", "19:30", "20:00"
+                ];
+
+                const duration = currentService?.duration || 60;
+                const todayStr = new Date().toISOString().split("T")[0];
+                const isSelectedDateToday = selectedDate === todayStr;
+                const now = new Date();
+                const currentMinutesNow = now.getHours() * 60 + now.getMinutes();
+
+                // Filter by time of day
+                const slotsToDisplay = BASE_SLOTS.filter((slotTime) => {
+                  const min = timeToMinutes(slotTime);
+                  if (timeOfDayFilter === "morning") return min < 780; // Before 13:00
+                  if (timeOfDayFilter === "afternoon") return min >= 780 && min < 1020; // 13:00 - 16:30
+                  if (timeOfDayFilter === "evening") return min >= 1020; // 17:00+
+                  return true;
+                });
+
+                return slotsToDisplay.map((timeSlot, tIdx) => {
+                  const startMin = timeToMinutes(timeSlot);
+                  const endMin = startMin + duration;
+                  const endTimeFormatted = minutesToTime(endMin);
+
+                  // 1. Check if past today
+                  const isPast = isSelectedDateToday && startMin <= currentMinutesNow;
+
+                  // 2. Check closing hours (20:30 = 1230 min)
+                  const isExceedsClosing = endMin > 1230;
+
+                  // 3. Check conflict from engine or booked slots
+                  const detail = slotDetails.find((s) => s.time === timeSlot);
+                  const isConflict = detail
+                    ? (!detail.available && detail.reason === "conflict")
+                    : bookedSlots.includes(timeSlot);
+
+                  // Engine availability check
+                  const isEngineUnavailable = detail ? !detail.available : false;
+
+                  const isUnavailable = isPast || isExceedsClosing || isConflict || isEngineUnavailable;
+                  const isSelected = selectedTime === timeSlot;
+
+                  if (isUnavailable) {
+                    let badgeText = "ติดคิว";
+                    if (isPast) badgeText = "เลยเวลา";
+                    else if (isExceedsClosing) badgeText = "เกิน 20:30";
+                    else if (detail?.reasonText) badgeText = detail.reason === "exceeds_closing" ? "เกิน 20:30" : "ติดคิว";
+
+                    return (
+                      <div
+                        key={`booked-${timeSlot}-${tIdx}`}
+                        title={
+                          isExceedsClosing
+                            ? `บริการนี้ใช้เวลา ${duration} นาที จะเสร็จสิ้น ${endTimeFormatted} น. ซึ่งเกินเวลาปิดร้าน (20:30 น.)`
+                            : isConflict
+                            ? `ช่างติดคิวบริการอื่นในช่วงนี้`
+                            : isPast
+                            ? `ช่วงเวลานี้ผ่านไปแล้วในวันนี้`
+                            : `ไม่ว่าง`
+                        }
+                        className="py-2 px-1.5 rounded-lg border border-gray-100 bg-gray-50/70 text-center opacity-40 cursor-not-allowed select-none"
+                      >
+                        <p className="text-xs font-semibold text-gray-400 line-through">
+                          {timeSlot}
+                        </p>
+                        <p className="text-[9px] text-gray-400 mt-0.5">
+                          {badgeText}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <button
+                      key={`avail-${timeSlot}-${tIdx}`}
+                      type="button"
+                      onClick={() => setSelectedTime(timeSlot)}
+                      className={`py-2 px-1.5 rounded-lg transition-all text-center cursor-pointer border ${
+                        isSelected
+                          ? "bg-[#D4A373] text-white font-bold shadow-sm shadow-[#D4A373]/30 border-[#D4A373] scale-102"
+                          : "border-gray-200 bg-white text-gray-800 hover:border-[#D4A373] hover:bg-[#FAF7F2]"
+                      }`}
+                    >
+                      <p className="text-xs font-bold leading-tight">
+                        {timeSlot}
+                      </p>
+                      <p
+                        className={`text-[9px] mt-0.5 leading-tight ${
+                          isSelected ? "text-white/80" : "text-gray-400"
+                        }`}
+                      >
+                        เสร็จ {endTimeFormatted}
+                      </p>
+                    </button>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Selected Time Banner */}
+            {selectedTime && currentService && (
+              <div className="mt-2 mb-3 p-3 rounded-lg bg-[#FAF7F2] border border-[#D4A373]/40 flex items-center justify-between text-xs animate-fade-in">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-[#D4A373]/20 flex items-center justify-center text-[#B88555] shrink-0">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-gray-900 leading-tight">
+                      เวลา {selectedTime} - {addMinutesToTime(selectedTime, currentService.duration || 60)} น.
+                    </p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">
+                      ระยะเวลา {currentService.duration || 60} นาที • {currentStaff?.name || "ช่างผู้เชี่ยวชาญ"}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold text-[#B88555] bg-white px-2.5 py-1 rounded-full border border-[#D4A373]/30 shadow-2xs shrink-0">
+                  ✓ เลือกรอบนี้
+                </span>
+              </div>
+            )}
+
             {availableSlots.length === 0 && !loadingAvailability && (
               <p className="text-xs text-center text-amber-800 bg-amber-50 p-2.5 rounded border border-amber-100">
-                ไม่มีช่วงเวลาว่างในวันนี้ กรุณาเลือกวันอื่น
+                ไม่มีช่วงเวลาว่างที่ตรงกับเงื่อนไขในวันนี้ กรุณาเลือกวันอื่นหรือเปลี่ยนช่าง
               </p>
             )}
           </section>
@@ -1205,8 +1447,8 @@ export default function App() {
                 </div>
                 <div className="flex justify-between text-xs mb-1.5">
                   <span className="text-gray-500">Appointment</span>
-                  <span className="font-medium text-gray-800">
-                    {selectedDate} {selectedTime ? `• ${selectedTime}` : ""}
+                  <span className="font-medium text-gray-800 text-right">
+                    {selectedDate} {selectedTime ? `• ${selectedTime} - ${addMinutesToTime(selectedTime, currentService?.duration || 60)} น.` : ""}
                   </span>
                 </div>
                 <div className="flex justify-between text-xs mb-1.5">
@@ -1271,6 +1513,19 @@ export default function App() {
                   <div className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-md text-[11px] text-amber-900 flex items-center justify-between">
                     <span className="font-semibold">🔑 โหมดผู้ดูแลระบบ (Admin Mode)</span>
                     <span className="text-[10px] text-amber-700">ลงคิวให้ลูกค้าได้ทันที</span>
+                  </div>
+                )}
+
+                {/* Conflict / Booking Error Alert Banner */}
+                {bookingErrorMessage && (
+                  <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5 animate-shake">
+                    <div className="w-5 h-5 rounded-full bg-rose-100 flex items-center justify-center text-rose-600 shrink-0 mt-0.5">
+                      ⚠️
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-bold text-rose-900 leading-snug">แจ้งเตือนการจองคิว</p>
+                      <p className="text-[11px] text-rose-700 mt-0.5 leading-relaxed">{bookingErrorMessage}</p>
+                    </div>
                   </div>
                 )}
 
@@ -1348,7 +1603,7 @@ export default function App() {
               <div className="flex justify-between">
                 <span className="text-gray-500">Date & Time:</span>
                 <span className="font-bold text-[#D4A373]">
-                  {bookingSuccessData.date} • {bookingSuccessData.time}
+                  {bookingSuccessData.date} • {bookingSuccessData.time} - {bookingSuccessData.endTime || addMinutesToTime(bookingSuccessData.time, bookingSuccessData.serviceDuration || 60)} น.
                 </span>
               </div>
               <div className="flex justify-between">
@@ -1520,6 +1775,15 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Conflict Resolution Recovery Modal */}
+      <ConflictResolutionModal
+        isOpen={Boolean(conflictData)}
+        conflictData={conflictData}
+        onSelectSlot={handleSelectAlternateSlot}
+        onSelectStaff={handleSelectAlternateStaff}
+        onClose={() => setConflictData(null)}
+      />
 
       {/* Admin PIN Login Modal */}
       <AdminLoginModal
